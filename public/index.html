@@ -442,17 +442,28 @@ td.n,th.n{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-
 @keyframes slide{from{opacity:0;transform:translateX(30px)}}
 
 /* ── Ticket térmico ──────────────────────────────────────────────────── */
-.ticket{background:#fff;color:#111;font-family:var(--mono);font-size:11.5px;line-height:1.42;
-  padding:14px 12px;width:302px;margin:0 auto}
+.ticket{background:#fff;color:#111;font-family:var(--mono);font-size:11.5px;line-height:1.18;
+  padding:10px 10px;width:302px;margin:0 auto}
 .ticket.w58{width:210px;font-size:10.5px}
-.ticket hr{border:0;border-top:1px dashed #999;margin:7px 0}
+.ticket hr{border:0;border-top:1px dashed #999;margin:3px 0}
 .ticket .c{text-align:center}
 .ticket .b{font-weight:700}
-.ticket .lg{font-size:14px;letter-spacing:.14em}
-.ticket table{width:100%;font-size:inherit}
-.ticket td{padding:1px 0;border:0;color:#111}
+.ticket .lg{font-size:13px;letter-spacing:.1em}
+.ticket table{width:100%;font-size:inherit;border-collapse:collapse}
+.ticket td{padding:0;border:0;color:#111;line-height:1.18}
 .ticket .r{text-align:right}
 .ticket-frame{background:#2a2a2a;padding:16px;border-radius:var(--r);max-height:52vh;overflow:auto}
+.ticket .tk-titulo{font-size:15px;letter-spacing:.1em}
+.ticket .tk-mesa{font-size:22px;margin:3px 0}
+.ticket .tk-sub{font-size:10px}
+.ticket .tk-item{margin-bottom:5px}
+.ticket .tk-item-nm{font-size:14px}
+.ticket .tk-item-p{font-size:10.5px;font-weight:600;color:#444}
+.ticket .tk-item-carne{font-size:13px;font-weight:700}
+.ticket .tk-item-nota{font-size:12px;font-weight:700}
+.ticket .tk-item-ad{font-size:12px;font-weight:700;color:#333}
+.ticket .tk-item-porc{font-size:10px}
+.ticket .tk-llevar{font-size:17px;letter-spacing:.1em;border:2px solid #111;padding:2px 0;margin:3px 0}
 
 /* ── Gráficos ────────────────────────────────────────────────────────── */
 .chart{width:100%;height:auto;display:block;overflow:visible}
@@ -724,7 +735,22 @@ tr.fila-total td{border-top:1.5px solid var(--brass-dim);font-weight:700;color:v
     border-radius:0;display:block;animation:none;padding:0;margin:0}
   .modal-b{padding:0;margin:0;overflow:visible;display:block}
   .ticket-frame{background:none;padding:0;margin:0;max-height:none;overflow:visible}
-  .ticket{width:100%;margin:0;padding:2mm 3mm 10mm 3mm}
+  .ticket{width:100%;margin:0;padding:1mm 2mm 6mm 2mm;line-height:1.15;font-size:11px}
+  .ticket.w58{font-size:10px}
+  .ticket hr{margin:2px 0}
+  .ticket td{padding:0;line-height:1.15}
+  .ticket .lg{font-size:12px;letter-spacing:.08em}
+  .ticket .tk-titulo{font-size:13px;letter-spacing:.08em}
+  .ticket .tk-mesa{font-size:18px;margin:2px 0}
+  .ticket .tk-sub{font-size:9px}
+  .ticket .tk-item{margin-bottom:3px}
+  .ticket .tk-item-nm{font-size:12px}
+  .ticket .tk-item-p{font-size:9px}
+  .ticket .tk-item-carne{font-size:11px}
+  .ticket .tk-item-nota{font-size:10px}
+  .ticket .tk-item-ad{font-size:10px}
+  .ticket .tk-item-porc{font-size:9px}
+  .ticket .tk-llevar{font-size:14px;padding:1px 0;margin:2px 0}
   .no-print{display:none !important}
 
   /* Documento único: cuando la impresión la dispara el sistema (body.imprimiendo)
@@ -1468,25 +1494,25 @@ const DB = {
       P('CAR-002','Punta de anca','c_car',56000,19000,'corte',1,'Punta de anca',22,'Corte insignia, t\u00e9rmino a elecci\u00f3n'),
       P('CAR-003','Lomo fino','c_car',62000,21000,'corte',1,'Lomo fino',16,'El corte m\u00e1s suave de la carta'),
       P('CAR-004','Baby beef','c_car',72000,24000,'corte',1,'Baby beef',20,'Res joven, sellado al carb\u00f3n'),
-      P('CAR-005','Costilla BBQ','c_car',52000,16000,'costilla',1,'Costilla de cerdo',28,'Cocci\u00f3n lenta, salsa BBQ ahumada'),
-      P('CAR-006','Pechuga a la parrilla','c_car',38000,10000,'pollo',1,'Pechuga de pollo',15,'Marinada en hierbas'),
-      P('ENT-001','Chorizo santarrosano','c_ent',14000,5000,'chorizo',0,null,8,''),
-      P('ENT-002','Empanadas de carne (3)','c_ent',12000,4000,'empanada',0,null,7,''),
-      P('ENT-003','Patac\u00f3n con hogao','c_ent',11000,3500,'arepa',0,null,9,''),
+      P('CAR-005','Costilla BBQ','c_asa',52000,16000,'costilla',1,'Costilla de cerdo',28,'Cocci\u00f3n lenta, salsa BBQ ahumada'),
+      P('CAR-006','Pechuga a la parrilla','c_asa',38000,10000,'pollo',1,'Pechuga de pollo',15,'Marinada en hierbas'),
+      P('ENT-001','Chorizo santarrosano','c_por',14000,5000,'chorizo',0,null,8,''),
+      P('ENT-002','Empanadas de carne (3)','c_por',12000,4000,'empanada',0,null,7,''),
+      P('ENT-003','Patac\u00f3n con hogao','c_por',11000,3500,'arepa',0,null,9,''),
       P('BEB-001','Gaseosa 400 ml','c_beb',5000,2000,'botella',0,null,1,''),
       P('BEB-002','Limonada de coco','c_beb',12000,4000,'vaso',0,null,4,''),
       P('BEB-003','Jugo natural','c_beb',9000,3000,'vaso',0,null,4,''),
       P('BEB-004','Cerveza nacional','c_beb',7000,3200,'jarra',0,null,1,''),
       P('BEB-005','Agua sin gas','c_beb',4000,1500,'agua',0,null,1,''),
-      P('ACO-001','Papa criolla','c_aco',9000,3000,'papa',0,null,8,''),
-      P('ACO-002','Yuca frita','c_aco',8000,2500,'fritos',0,null,8,''),
-      P('ACO-003','Ensalada de la casa','c_aco',10000,3200,'ensalada',0,null,5,''),
-      P('ACO-004','Arepa de ma\u00edz','c_aco',4000,1200,'arepa',0,null,4,''),
-      P('POS-001','Flan de caramelo','c_pos',11000,3500,'postre',0,null,3,''),
-      P('POS-002','Postre de natas','c_pos',12000,4000,'torta',0,null,3,''),
-      P('COM-001','Combo parrilla personal','c_com',65000,22000,'combo',1,'Churrasco',22,'Churrasco 400 g + 2 acompa\u00f1amientos + bebida'),
-      P('COM-002','Picada para dos','c_com',89000,31000,'combo',2,'Costilla de cerdo',26,'Costilla, chorizo, papa criolla y arepa'),
-      P('PRO-001','Martes de costilla','c_pro',39000,16000,'promo',1,'Costilla de cerdo',28,'Promoci\u00f3n v\u00e1lida los martes')
+      P('POR-001','Papa criolla','c_por',9000,3000,'papa',0,null,8,''),
+      P('POR-002','Yuca frita','c_por',8000,2500,'fritos',0,null,8,''),
+      P('POR-003','Ensalada de la casa','c_por',10000,3200,'ensalada',0,null,5,''),
+      P('POR-004','Arepa de ma\u00edz','c_por',4000,1200,'arepa',0,null,4,''),
+      P('ESP-001','Flan de caramelo','c_esp',11000,3500,'postre',0,null,3,''),
+      P('ESP-002','Postre de natas','c_esp',12000,4000,'torta',0,null,3,''),
+      P('BAN-001','Combo parrilla personal','c_ban',65000,22000,'combo',1,'Churrasco',22,'Churrasco 400 g + 2 acompa\u00f1amientos + bebida'),
+      P('BAN-002','Picada para dos','c_ban',89000,31000,'combo',2,'Costilla de cerdo',26,'Costilla, chorizo, papa criolla y arepa'),
+      P('ECO-001','Martes de costilla','c_eco',39000,16000,'promo',1,'Costilla de cerdo',28,'Promoci\u00f3n v\u00e1lida los martes')
     ];
     // Las bebidas en envase se cuentan por unidad, una entrada por presentación.
     const bebidas = [
@@ -1509,13 +1535,14 @@ const DB = {
   },
   defaults(){
     const cats = [
-      {id:'c_car', nombre:'Carnes',          ico:'corte', orden:1, act:Util.now()},
-      {id:'c_ent', nombre:'Entradas',        ico:'ensalada', orden:2, act:Util.now()},
-      {id:'c_beb', nombre:'Bebidas',         ico:'botella', orden:3, act:Util.now()},
-      {id:'c_aco', nombre:'Acompa\u00f1amientos', ico:'fritos', orden:4, act:Util.now()},
-      {id:'c_pos', nombre:'Postres',         ico:'torta', orden:5, act:Util.now()},
-      {id:'c_com', nombre:'Combos',          ico:'combo', orden:6, act:Util.now()},
-      {id:'c_pro', nombre:'Promociones',     ico:'promo', orden:7, act:Util.now()}
+      {id:'c_ban', nombre:'Bandejas',        ico:'combo', orden:1, act:Util.now()},
+      {id:'c_eco', nombre:'Económicos',      ico:'corte', orden:2, act:Util.now()},
+      {id:'c_asa', nombre:'Asados',          ico:'costilla', orden:3, act:Util.now()},
+      {id:'c_esp', nombre:'Especiales',      ico:'corte', orden:4, act:Util.now()},
+      {id:'c_des', nombre:'Desayunos',       ico:'combo', orden:5, act:Util.now()},
+      {id:'c_beb', nombre:'Bebidas',         ico:'botella', orden:6, act:Util.now()},
+      {id:'c_por', nombre:'Porciones',       ico:'fritos', orden:7, act:Util.now()},
+      {id:'c_car', nombre:'Carnes',          ico:'corte', orden:8, act:Util.now()}
     ];
 
     return {
@@ -1570,11 +1597,24 @@ const DB = {
     if (migrados) this.touch('meats');
     this.aPorciones();
     this.asegurarAcceso();
+    /* Respaldar PINs en clave aparte: si al actualizar el archivo los usuarios
+       se restauraran de fábrica, los PINs reales se recuperan automáticamente. */
+    const pinBk = await Persist.get('jp_bk_pins');
     if (virgen){
-      const pin = await Util.hash('1234');
-      this.d.users.forEach(u => u.pin = pin);
+      if (pinBk && Array.isArray(pinBk)){
+        // Restaurar PINs del respaldo (el archivo es nuevo pero había PINs guardados)
+        pinBk.forEach(pb => {
+          const u = this.d.users.find(x => x.id === pb.id || x.usuario === pb.usuario);
+          if (u && pb.pin) u.pin = pb.pin;
+        });
+      } else {
+        const pin = await Util.hash('1234');
+        this.d.users.forEach(u => { if (!u.pin) u.pin = pin; });
+      }
       await this.saveAll();
     }
+    // Siempre respaldar los PINs actuales
+    await Persist.set('jp_bk_pins', this.d.users.map(u => ({id:u.id, usuario:u.usuario, pin:u.pin})));
     return virgen;
   },
   /** Las carnes se contaban en gramos y ahora se cuentan en porciones. Lo ya
@@ -1749,7 +1789,11 @@ const DB = {
   mealsOf(fecha){ return this.meals().filter(m => m.fecha.slice(0,10) === (fecha || Util.today())); },
   /** El registro de hoy de una persona, si ya comió. */
   mealHoy(userId, fecha){
-    return this.mealsOf(fecha).find(m => m.userId === userId) || null;
+    const meals = this.mealsOf(fecha);
+    const ahora = Date.now();
+    const HORAS_BLOQUEO = 8;
+    return meals.find(m => m.userId === userId &&
+      (ahora - new Date(m.fecha).getTime()) < HORAS_BLOQUEO * 3600000) || null;
   },
   ABIERTAS:['pendiente','preparando','listo','entregado'],
   openOrders(){ return this.orders().filter(o => this.ABIERTAS.includes(o.estado)); },
@@ -2038,8 +2082,8 @@ const Sync = {
    ------------------------------------------------------------------- */
 const PERMS = {
   admin:      ['*'],
-  supervisor: ['dash','pos','comandas','kds','cobrar','menu','inv','buy','clients','cash','reports','audit','sync','descuento','anular','cerrarcaja','alimentacion'],
-  cajero:     ['dash','pos','comandas','kds','cobrar','inv:read','clients','cash','sync','descuento','cerrarcaja','alimentacion'],
+  supervisor: ['dash','pos','comandas','kds','cobrar','menu','inv','buy','clients','cash','reports','audit','sync','descuento','anular','cerrarcaja','alimentacion','gastos'],
+  cajero:     ['dash','pos','comandas','kds','cobrar','inv','clients','cash','sync','descuento','cerrarcaja','alimentacion','reports','gastos','gastos:add'],
   mesero:     ['pos','comandas','inv:read','clients'],
   cocina:     ['kds','comandas:read','inv:read']
 };
@@ -2880,7 +2924,7 @@ const NAV = [
   {id:'reports', t:'Reportes',     ico:'rep',  perm:'reports'},
   {id:'sync',    t:'Sincronización',ico:'sync', perm:'sync'},
   {id:'audit',   t:'Auditoría',    ico:'shield',perm:'audit'},
-  {id:'gastos',  t:'Gastos',       ico:'cash',  perm:'admin'},
+  {id:'gastos',  t:'Gastos',       ico:'cash',  perm:'gastos'},
   {id:'cfg',     t:'Configuración',ico:'cfg',  perm:'cfg'}
 ];
 const TABS = [
@@ -2984,12 +3028,11 @@ const Router = {
     clearInterval(this._timer); this._timer = null;
 
     /* ── Guardar foco y cursor del input activo antes de destruir el DOM ── */
-    let focusId = null, focusSel = null, focusCursor = null;
+    let focusId = null, focusSel = 0, focusCursor = 0;
     const ae = document.activeElement;
-    if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA') && main.contains(ae)){
-      focusId = ae.id || null;
-      focusSel = ae.selectionStart;
-      focusCursor = ae.selectionEnd;
+    if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA') && ae.id && main.contains(ae)){
+      focusId = ae.id;
+      try{ focusSel = ae.selectionStart || 0; focusCursor = ae.selectionEnd || 0; }catch(e){ focusSel = focusCursor = (ae.value||'').length; }
     }
 
     main.innerHTML = v.html();
@@ -3492,6 +3535,7 @@ const POS = {
     const coccion = ['Término medio','Tres cuartos','Bien asado','Poco asado','Sin sal','Sin picante','Extra limón','Aparte','Para llevar'];
     const ensaladas = ['Ensalada de cebolla y tomate','Ensalada de remolacha','Ensalada agridulce','Ensalada de repollo','Ensalada de lechuga'];
     const jugos = ['Tomate','Guayaba','Tropical','Piña','Curuba','Guarapo','Claro','Mazamorra','Mango','Banano'];
+    const sopas = ['Sopa del día','Menudencia','Pescado'];
 
     const close = UI.modal({
       title:(linea ? 'Editar ' : '') + p.nombre, size:'lg',
@@ -3511,6 +3555,9 @@ const POS = {
         '<div class="eyebrow" style="margin:16px 0 7px">Paso 2 · indicaciones para cocina</div>' +
         '<textarea class="inp" id="bNota" rows="2" ' +
           'placeholder="Escribe la indicación o selecciona las opciones rápidas">' + Util.esc(nota) + '</textarea>' +
+        '<div style="margin-top:8px"><span class="dim" style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase">Sopa</span>' +
+        '<div class="chips wrap" style="margin-top:4px">' +
+          sopas.map(x => '<button class="chip" data-s="Sopa: ' + Util.esc(x) + '">' + x + '</button>').join('') + '</div></div>' +
         '<div style="margin-top:8px"><span class="dim" style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase">Término de cocción</span>' +
         '<div class="chips wrap" style="margin-top:4px">' +
           coccion.map(x => '<button class="chip" data-s="' + Util.esc(x) + '">' + x + '</button>').join('') + '</div></div>' +
@@ -3586,19 +3633,36 @@ const POS = {
     const chipsEnsalada = ['Ensalada de cebolla y tomate','Ensalada de remolacha','Ensalada agridulce','Ensalada de repollo','Ensalada de lechuga'];
     const p = DB.product(it.pid);
     const esBandejaOEco = p && (p.bandeja || /econ[oó]mi/i.test(p.nombre) || /econ[oó]mi/i.test((DB.cat(p.cat)||{}).nombre));
+    const esDesayuno = p && ((DB.cat(p.cat)||{}).id === 'c_des' || /desayuno/i.test((DB.cat(p.cat)||{}).nombre));
     const jugos = ['Tomate','Guayaba','Tropical','Piña','Curuba','Guarapo','Claro','Mazamorra','Mango','Banano'];
+    const sopas = ['Sopa del día','Menudencia','Pescado'];
+    const excluirCarnes = ['tilapia','punta de anca','churrasco','trucha',
+      'picada para 2','picada para dos','picada para 4','picada para cuatro',
+      'sopa del dia','sopa del día','calentado',
+      'salchichas zenu','salchichas zenú','salchicha zenu','salchicha zenú',
+      'lonchitas','lonchita','arepa tela','ensalada','desayuno sencillo'];
+    const norm = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+    const carnesDesayuno = esDesayuno ? DB.meats().filter(m => (m.tipo||'carne') === 'carne' && !excluirCarnes.some(e => norm(m.nombre).includes(norm(e)))).map(m => m.nombre) : [];
     UI.formModal({
       title:'Nota · ' + it.nombre, size:'sm',
       fields:[{k:'nota', label:'Indicación para cocina', type:'textarea', val:it.nota, full:true,
         ph:'Escribe la indicación o selecciona opciones rápidas'}],
-      extra:'<div style="margin-top:10px"><span class="dim" style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase">Cocción</span>' +
+      extra:'<div style="margin-top:10px"><span class="dim" style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase">Sopa</span>' +
+        '<div class="chips wrap" style="margin-top:4px">' + sopas.map(c=>'<button class="chip" data-chip="Sopa: '+Util.esc(c)+'">'+c+'</button>').join('') + '</div></div>' +
+        '<div style="margin-top:8px"><span class="dim" style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase">Cocción</span>' +
         '<div class="chips wrap" style="margin-top:4px">' + chipsCoccion.map(c=>'<button class="chip" data-chip="'+Util.esc(c)+'">'+c+'</button>').join('') + '</div></div>' +
         '<div style="margin-top:8px"><span class="dim" style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase">Acompañamientos</span>' +
         '<div class="chips wrap" style="margin-top:4px">' + chipsAcomp.map(c=>'<button class="chip" data-chip="'+Util.esc(c)+'">'+c+'</button>').join('') + '</div></div>' +
         '<div style="margin-top:8px"><span class="dim" style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase">Ensaladas</span>' +
         '<div class="chips wrap" style="margin-top:4px">' + chipsEnsalada.map(c=>'<button class="chip" data-chip="'+Util.esc(c)+'">'+c+'</button>').join('') + '</div></div>' +
-        (esBandejaOEco ? '<div style="margin-top:8px"><span class="dim" style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase">Jugo incluido</span>' +
-          '<div class="chips wrap" style="margin-top:4px">' + jugos.map(c=>'<button class="chip" data-chip="Jugo de '+Util.esc(c)+'">'+c+'</button>').join('') + '</div></div>' : '') +
+        (esDesayuno && carnesDesayuno.length ? '<div style="margin-top:8px"><span class="dim" style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase">Carne</span>' +
+          '<div class="chips wrap" style="margin-top:4px">' + carnesDesayuno.map(c=>'<button class="chip" data-chip="Carne: '+Util.esc(c)+'">'+c+'</button>').join('') + '</div></div>' : '') +
+        '<div style="margin-top:8px"><span class="dim" style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase">Jugo incluido</span>' +
+          '<div class="chips wrap" style="margin-top:4px">' + jugos.map(c=>'<button class="chip" data-chip="Jugo de '+Util.esc(c)+'">'+c+'</button>').join('') + '</div></div>' +
+        (esDesayuno ? '<div style="margin-top:8px"><span class="dim" style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase">Bebida incluida</span>' +
+          '<div class="chips wrap" style="margin-top:4px">' +
+            ['Café con Leche','Chocolate con Leche','Chocolate sin Leche','Tinto'].map(c=>'<button class="chip" data-chip="Bebida: '+Util.esc(c)+'">'+c+'</button>').join('') +
+          '</div></div>' : '') +
         '<hr style="border-color:var(--line);margin:12px 0 8px">' +
         '<div><span class="dim" style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase">Adiciones con precio</span>' +
           '<div class="chips wrap" style="margin-top:6px">' +
@@ -3700,7 +3764,7 @@ const POS = {
   },
   mount(){
     const q = document.getElementById('pq');
-    q.oninput = Util.debounce(e => { POS.q = e.target.value; POS.paintGrid(); }, 110);
+    q.oninput = Util.debounce(() => { POS.q = q.value; POS.paintGrid(); }, 110);
     document.querySelectorAll('[data-cat]').forEach(b => b.onclick = () => {
       POS.cat = b.dataset.cat;
       document.querySelectorAll('[data-cat]').forEach(x => x.classList.toggle('on', x === b));
@@ -4100,17 +4164,20 @@ const POS = {
     let pagos = personas
       ? Array.from({length:personas}, (_,i) => ({metodo:'Efectivo', monto: i === personas-1 ? t.total - Math.floor(t.total/personas)*(personas-1) : Math.floor(t.total/personas)}))
       : [{metodo:'Efectivo', monto:t.total}];
+    let recibeCliente = 0;
 
     const close = UI.modal({
       title:'Cobrar ' + Util.money(t.total), size:'',
       body:'<div id="payBox"></div>',
       footer:'<button class="btn" data-close>Volver</button>' +
-             '<button class="btn pri" id="doPay">Confirmar cobro</button>',
+             '<button class="btn pri" id="doPay">Confirmar cobro y facturar</button>',
       onMount(ov, cls){
         const box = ov.querySelector('#payBox');
         const paint = () => {
           const cubierto = pagos.reduce((a,p)=>a+(Number(p.monto)||0),0);
           const falta = t.total - cubierto;
+          const tieneEfectivo = pagos.some(p => p.metodo === 'Efectivo');
+          const cambioRecibe = recibeCliente > 0 ? recibeCliente - t.total : 0;
           box.innerHTML =
             '<div class="card" style="margin-bottom:12px"><div class="tot-row"><span>Subtotal</span><b>' + Util.money(t.subtotal) + '</b></div>' +
             (t.descuento?'<div class="tot-row"><span>Descuento</span><b>−' + Util.money(t.descuento) + '</b></div>':'') +
@@ -4125,17 +4192,51 @@ const POS = {
                 (pagos.length>1 ? '<button class="btn icon ghost" data-rm="' + i + '">' + Util.ico('x') + '</button>' : '') +
               '</div>').join('') +
             '<button class="btn sm ghost" id="addPay" style="margin-top:9px">' + Util.ico('plus') + ' Agregar forma de pago</button>' +
+
+            /* Calculadora de cambio: se muestra cuando hay pago en efectivo */
+            (tieneEfectivo
+              ? '<div class="card" style="margin-top:12px;border-color:var(--brass)">' +
+                  '<div class="eyebrow" style="margin-bottom:8px">Calculadora de cambio</div>' +
+                  '<label class="f" style="margin-bottom:0"><span style="font-size:12px">El cliente paga con:</span>' +
+                    '<input class="inp num" type="number" id="recibeBillete" value="' + (recibeCliente||'') +
+                    '" placeholder="Ej: 100000" min="0" style="text-align:right;font-size:18px;font-weight:700"></label>' +
+                  '<div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">' +
+                    [10000,20000,50000,100000].map(v =>
+                      '<button class="btn' + (recibeCliente===v?' gold':'') + '" data-bill="' + v + '" ' +
+                        'style="flex:1;min-width:80px;font-size:16px;font-weight:700;padding:12px 8px">' + Util.money(v,false) + '</button>'
+                    ).join('') +
+                  '</div>' +
+                  (recibeCliente > 0
+                    ? '<div style="margin-top:10px;padding:10px 14px;border-radius:8px;background:' +
+                        (cambioRecibe >= 0 ? 'rgba(62,155,98,.1)' : 'rgba(220,80,60,.08)') +
+                        ';text-align:center">' +
+                        '<div style="font-size:11px;color:var(--ash-dim)">' + (cambioRecibe >= 0 ? 'Devuelta al cliente' : 'Falta') + '</div>' +
+                        '<div style="font-size:28px;font-weight:800;letter-spacing:-.02em;color:' +
+                          (cambioRecibe >= 0 ? 'var(--ok)' : 'var(--ember-hi)') + '">' +
+                          (cambioRecibe >= 0 ? Util.money(cambioRecibe) : '−' + Util.money(Math.abs(cambioRecibe))) +
+                        '</div></div>'
+                    : '') +
+                '</div>'
+              : '') +
+
             '<div class="card" style="margin-top:12px;border-color:' + (Math.abs(falta)<1?'var(--line-soft)':'var(--ember-dim)') + '">' +
-              '<div class="row"><span class="mut" style="font-size:12.5px">' + (falta > 0 ? 'Falta por cubrir' : (falta < 0 ? 'Cambio a devolver' : 'Cuenta cuadrada')) + '</span>' +
+              '<div class="row"><span class="mut" style="font-size:12.5px">' + (falta > 0 ? 'Falta por cubrir' : (falta < 0 ? 'Excedente registrado' : 'Cuenta cuadrada')) + '</span>' +
               '<b class="num right" style="font-size:18px;color:' + (falta>0?'var(--ember-hi)':(falta<0?'var(--brass-hi)':'var(--ok)')) + '">' +
               Util.money(Math.abs(falta)) + '</b></div></div>';
-          box.querySelectorAll('[data-met]').forEach(s => s.onchange = e => { pagos[+s.dataset.met].metodo = e.target.value; });
-          box.querySelectorAll('[data-mon]').forEach(inp => inp.oninput = e => { pagos[+inp.dataset.mon].monto = Number(e.target.value)||0; paint(); });
+          box.querySelectorAll('[data-met]').forEach(s => s.onchange = e => { pagos[+s.dataset.met].metodo = e.target.value; paint(); });
+          box.querySelectorAll('[data-mon]').forEach(inp => inp.oninput = () => { pagos[+inp.dataset.mon].monto = Number(inp.value)||0; paint(); });
           box.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { pagos.splice(+b.dataset.rm,1); paint(); });
           box.querySelector('#addPay').onclick = () => {
             const falta2 = t.total - pagos.reduce((a,p)=>a+(Number(p.monto)||0),0);
             pagos.push({metodo:'Tarjeta débito', monto: Math.max(0, falta2)}); paint();
           };
+          /* Handlers de la calculadora de cambio */
+          const inpRecibe = box.querySelector('#recibeBillete');
+          if (inpRecibe) inpRecibe.oninput = () => { recibeCliente = Number(inpRecibe.value)||0; paint(); };
+          box.querySelectorAll('[data-bill]').forEach(b => b.onclick = () => {
+            recibeCliente = parseInt(b.dataset.bill, 10);
+            paint();
+          });
         };
         paint();
         ov.querySelector('#doPay').onclick = () => {
@@ -4170,6 +4271,15 @@ const POS = {
     // 1. Descuento de inventario en gramos, por corte
     const consumo = {};
     venta.items.forEach(i => { if (i.carne) consumo[i.carne] = (consumo[i.carne]||0) + i.gramos*i.qty; });
+    // 1b. Descuento de insumos adicionales (insumosExtra) por producto
+    venta.items.forEach(i => {
+      const prod = DB.product(i.pid);
+      if (prod && Array.isArray(prod.insumosExtra)){
+        prod.insumosExtra.forEach(ie => {
+          if (ie.id) consumo[ie.id] = (consumo[ie.id]||0) + (ie.qty||1)*i.qty;
+        });
+      }
+    });
     Object.entries(consumo).forEach(([mid, g]) => {
       const m = DB.meat(mid); if(!m) return;
       m.gramos = Math.max(0, m.gramos - g); m.act = Util.now();
@@ -4411,6 +4521,7 @@ Views.orders = {
         '<div class="row wrap" style="gap:7px">' +
           (Auth.can('pos') ? '<button class="btn sm grow" data-add="' + o.id + '">Agregar</button>' : '') +
           '<button class="btn sm grow" data-pre="' + o.id + '">Precuenta</button>' +
+          '<button class="btn sm" data-tk="' + o.id + '">' + Util.ico('print') + ' Comanda</button>' +
           (Auth.can('cobrar') ? '<button class="btn sm pri grow" data-pay="' + o.id + '">Cobrar</button>' : '') +
           (Auth.can('anular') ? '<button class="btn sm ghost" data-can="' + o.id + '" style="color:var(--ash-dim)">Cancelar</button>' : '') +
         '</div></div>';
@@ -4449,6 +4560,7 @@ Views.orders = {
     document.querySelectorAll('[data-add]').forEach(b => b.onclick = () => POS.loadOrder(b.dataset.add, false));
     document.querySelectorAll('[data-pay]').forEach(b => b.onclick = () => POS.loadOrder(b.dataset.pay, true));
     document.querySelectorAll('[data-pre]').forEach(b => b.onclick = () => Ticket.precuenta(b.dataset.pre));
+    document.querySelectorAll('[data-tk]').forEach(b => b.onclick = () => Ticket.comanda(b.dataset.tk));
     document.querySelectorAll('[data-can]').forEach(b => b.onclick = () => Orders.cancelar(b.dataset.can));
     document.querySelectorAll('[data-oline]').forEach(b => b.onclick = () => Orders.quitarLinea(b.dataset.oline, Number(b.dataset.idx)));
     const n = document.querySelector('[data-act=new]');
@@ -4504,25 +4616,25 @@ const Ticket = {
     const o = DB.order(orderId); if (!o) return;
     const items = o.items.filter(i => !ronda || i.ronda === ronda);
     const llevar = o.tipo && o.tipo !== 'mesa';
-    const cuerpo = '<div class="ticket" style="font-size:13px;line-height:1.5">' +
-      '<div class="c"><img src="' + (DB.d.config.logo || Ticket.LOGO_PRINT) + '" style="max-width:45%;height:auto;margin-bottom:4px"></div>' +
-      '<div class="c b" style="font-size:17px;letter-spacing:.1em">COCINA</div>' +
-      (llevar ? '<div class="c b" style="font-size:20px;letter-spacing:.12em;margin:4px 0;' +
-        'border:2px solid #111;padding:3px 0">** ' + POS.TIPOS[o.tipo].corto.toUpperCase() + ' **</div>' : '') +
-      '<div class="c b" style="font-size:26px;margin:4px 0">' +
+    const cuerpo = '<div class="ticket">' +
+      '<div class="c"><img src="' + (DB.d.config.logo || Ticket.LOGO_PRINT) + '" style="max-width:45%;height:auto;margin-bottom:3px"></div>' +
+      '<div class="c b tk-titulo">COCINA</div>' +
+      (llevar ? '<div class="c b tk-llevar">** ' + POS.TIPOS[o.tipo].corto.toUpperCase() + ' **</div>' : '') +
+      '<div class="c b tk-mesa">' +
         (llevar ? Util.esc(o.mesa || POS.TIPOS[o.tipo].corto) : 'MESA ' + Util.esc(o.mesa)) + '</div>' +
-      '<div class="c">' + Util.esc(o.numero) + (ronda>1 ? ' · RONDA ' + ronda : '') + '</div>' +
-      '<div class="c">' + Util.time(Util.now()) + ' · ' + Util.esc((DB.user(o.meseroId)||{}).nombre||'') + '</div><hr>' +
-      items.map(i => '<div style="margin-bottom:7px"><b style="font-size:16px">' + i.qty + ' × ' + Util.esc(i.nombre) + '</b>' +
-        (i.carneNombre ? '<div style="font-size:15px;font-weight:700">&gt; ' + Util.esc(i.carneNombre.toUpperCase()) + '</div>' : '') +
-        (i.gramos ? '<div style="font-size:11px">' + Util.cantIns(i.gramos*i.qty, DB.meat(i.carne)) + '</div>' : '') +
-        (i.nota ? '<div style="font-size:14px;font-weight:700">>> ' + Util.esc(i.nota.toUpperCase()) + '</div>' : '') +
-        ((i.adiciones&&i.adiciones.length) ? i.adiciones.map(a=>'<div style="font-size:14px;font-weight:700;color:#333">[+] ' + Util.esc(a.nombre.toUpperCase()) + '</div>').join('') : '') + '</div>').join('') +
-      (o.nota ? '<hr><div><b>Nota:</b> ' + Util.esc(o.nota) + '</div>' : '') +
+      '<div class="c tk-sub">' + Util.esc(o.numero) + (ronda>1 ? ' · RONDA ' + ronda : '') + '</div>' +
+      '<div class="c tk-sub">' + Util.time(Util.now()) + ' · ' + Util.esc((DB.user(o.meseroId)||{}).nombre||'') + '</div><hr>' +
+      items.map(i => '<div class="tk-item"><div class="b tk-item-nm">' + i.qty + ' × ' + Util.esc(i.nombre) + '</div>' +
+        '<div class="tk-item-p">$ ' + Util.money((i.precio + ((i.adiciones||[]).reduce((s,x)=>s+x.precio,0))) * i.qty, false) + '</div>' +
+        (i.carneNombre ? '<div class="tk-item-carne">&gt; ' + Util.esc(i.carneNombre.toUpperCase()) + '</div>' : '') +
+        (i.gramos ? '<div class="tk-item-porc">' + Util.cantIns(i.gramos*i.qty, DB.meat(i.carne)) + '</div>' : '') +
+        (i.nota ? '<div class="tk-item-nota">&gt;&gt; ' + Util.esc(i.nota.toUpperCase()) + '</div>' : '') +
+        ((i.adiciones&&i.adiciones.length) ? i.adiciones.map(a=>'<div class="tk-item-ad">[+] ' + Util.esc(a.nombre.toUpperCase()) + '</div>').join('') : '') + '</div>').join('') +
+      (o.nota ? '<hr><div class="tk-sub"><b>Nota:</b> ' + Util.esc(o.nota) + '</div>' : '') +
       (llevar && o.entrega && (o.entrega.direccion || o.entrega.telefono)
-        ? '<hr><div><b>Entrega:</b> ' + Util.esc(o.entrega.direccion||'') +
+        ? '<hr><div class="tk-sub"><b>Entrega:</b> ' + Util.esc(o.entrega.direccion||'') +
           (o.entrega.telefono ? '<br>Tel: ' + Util.esc(o.entrega.telefono) : '') + '</div>' : '') +
-      (llevar && o.domicilio ? '<div><b>Domicilio:</b> ' + Util.money(o.domicilio) + '</div>' : '') +
+      (llevar && o.domicilio ? '<div class="tk-sub"><b>Domicilio:</b> ' + Util.money(o.domicilio) + '</div>' : '') +
       '</div>';
     UI.modal({title:'Comanda de cocina · mesa ' + o.mesa, size:'sm',
       body:'<div class="ticket-frame">' + cuerpo + '</div>',
@@ -5134,7 +5246,7 @@ Views.menu = {
   },
   mount(){
     const q = document.getElementById('mq');
-    q.oninput = Util.debounce(e => { State.filters.menu.q = e.target.value; Router.render(); }, 220);
+    q.oninput = Util.debounce(() => { State.filters.menu.q = q.value; Router.render(); }, 220);
     document.querySelectorAll('[data-c]').forEach(b => b.onclick = () => { State.filters.menu.cat = b.dataset.c; Router.render(); });
     document.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => Views.menu.form(b.dataset.edit));
     document.querySelectorAll('[data-fixband]').forEach(b => b.onclick = () => {
@@ -5161,13 +5273,28 @@ Views.menu = {
   },
   form(id){
     const p = id ? DB.product(id) : null;
+    /** Genera el siguiente código interno secuencial basado en la categoría */
+    const siguienteCodigo = (catId) => {
+      const cat = DB.cat(catId);
+      /* Prefijo: primeras 3 letras del nombre de la categoría, sin tildes, en mayúscula */
+      const prefijo = cat ? Util.norm(cat.nombre).slice(0,3).toUpperCase() : 'PLT';
+      const regex = new RegExp('^' + prefijo + '-(\\d+)$', 'i');
+      let max = 0;
+      DB.prods().forEach(prod => {
+        const m = (prod.codigo || '').match(regex);
+        if (m) { const n = parseInt(m[1], 10); if (n > max) max = n; }
+      });
+      return prefijo + '-' + String(max + 1).padStart(3, '0');
+    };
+    const codigoInicial = p ? p.codigo : siguienteCodigo('c_ban');
     UI.formModal({
       title: p ? 'Editar ' + p.nombre : 'Nuevo plato', size:'lg', ok: p?'Guardar cambios':'Crear plato',
       groups:[
         {title:'Identificación', fields:[
           {k:'nombre', label:'Nombre', val:p?p.nombre:'', req:true},
-          {k:'codigo', label:'Código interno', val:p?p.codigo:'', req:true, ph:'CAR-007'},
-          {k:'cat', label:'Categoría', type:'select', val:p?p.cat:'c_car', opts:DB.cats().map(c=>({v:c.id,t:c.nombre}))},
+          {k:'codigo', label:'Código interno', val:codigoInicial, req:true, ph:'CAR-007',
+           hint:p ? '' : 'Generado automáticamente. Puedes modificarlo.'},
+          {k:'cat', label:'Categoría', type:'select', val:p?p.cat:'c_ban', opts:DB.cats().map(c=>({v:c.id,t:c.nombre}))},
           {k:'ico', label:'Dibujo del plato', type:'glifo', val:p?Glifo.para(p):'',
            hint:'Se propone solo según el nombre; tócalo si prefieres otro'}
         ]},
@@ -5192,6 +5319,10 @@ Views.menu = {
              .concat([{v:'__nueva', t:'➕ Crear una bebida con el nombre de este plato'}])},
           {k:'gramos', label:'Cuánto descuenta', type:'number', val:p?(p.gramos||0):0, min:0,
            hint:'Casi siempre 1: una porción de carne o un envase. Déjalo en cero si no lleva inventario.'}
+        ]},
+        {title:'Insumos adicionales del plato', fields:[
+          {k:'insumosExtra', label:'', type:'hidden',
+           val:p && p.insumosExtra ? JSON.stringify(p.insumosExtra) : '[]'}
         ]},
         {title:'Detalle', fields:[
           {k:'desc', label:'Descripción para la carta', type:'textarea', val:p?p.desc:'', full:true},
@@ -5237,6 +5368,9 @@ Views.menu = {
           if (!d.carne) d.gramos = 0;
         }
         d.porcionMigrada = true;
+        /* Parsear insumos extras */
+        try{ d.insumosExtra = JSON.parse(d.insumosExtra||'[]').filter(ie => ie.id); }catch(e){ d.insumosExtra = []; }
+        if (!Array.isArray(d.insumosExtra)) d.insumosExtra = [];
         const obj = Object.assign(p || {id:Util.uid('p')}, d, {carne:d.carne||null, act:Util.now()});
         if (!p) DB.d.products.push(obj);
         DB.touch('products','meats');
@@ -5245,6 +5379,63 @@ Views.menu = {
         close(); UI.toast(p?'Plato actualizado.':'Plato agregado a la carta.','ok'); Router.render();
       }
     });
+    /* FASE 3: Al crear un plato nuevo, actualizar el código cuando cambie la categoría */
+    if (!p){
+      setTimeout(() => {
+        const selCat = document.querySelector('#mform [name="cat"]');
+        const inpCod = document.querySelector('#mform [name="codigo"]');
+        if (selCat && inpCod){
+          let codigoEditadoManualmente = false;
+          inpCod.addEventListener('input', () => { codigoEditadoManualmente = true; });
+          selCat.addEventListener('change', () => {
+            if (!codigoEditadoManualmente){
+              inpCod.value = siguienteCodigo(selCat.value);
+            }
+          });
+        }
+        /* ── Insumos adicionales: UI dinámica ── */
+        const hiddenIE = document.querySelector('#mform [name="insumosExtra"]');
+        if (hiddenIE){
+          let extras = [];
+          try{ extras = JSON.parse(hiddenIE.value||'[]'); }catch(e){ extras = []; }
+          if (!Array.isArray(extras)) extras = [];
+          const allInsumos = DB.meats().map(m=>({v:m.id, t:(m.tipo==='bebida'?'Bebida':'Carne') + ' · ' + DB.rotulo(m)}));
+          const wrapper = document.createElement('div');
+          wrapper.id = 'ieWrap';
+          hiddenIE.parentElement.appendChild(wrapper);
+          const pintaIE = () => {
+            hiddenIE.value = JSON.stringify(extras);
+            wrapper.innerHTML =
+              '<p style="font-size:12.5px;color:var(--ash-dim);margin:0 0 8px">Si este plato lleva varios productos del inventario, agrégalos aquí. Cada uno se descontará al vender.</p>' +
+              extras.map((ie, i) =>
+                '<div class="row" style="margin-bottom:6px;gap:6px">' +
+                  '<select class="inp" data-ie-sel="' + i + '" style="flex:2">' +
+                    '<option value="">Seleccionar insumo…</option>' +
+                    allInsumos.map(o => '<option value="' + o.v + '"' + (o.v===ie.id?' selected':'') + '>' + Util.esc(o.t) + '</option>').join('') +
+                  '</select>' +
+                  '<input class="inp num" type="number" data-ie-qty="' + i + '" value="' + (ie.qty||1) + '" min="1" placeholder="Cant" style="flex:.6;text-align:center" title="Porciones a descontar">' +
+                  '<button class="btn sm ghost" data-ie-rm="' + i + '" style="color:var(--ash-dim)">×</button>' +
+                '</div>'
+              ).join('') +
+              '<button class="btn sm ghost" id="ieAdd" style="margin-top:4px">' + Util.ico('plus') + ' Agregar otro insumo</button>';
+            wrapper.querySelectorAll('[data-ie-sel]').forEach(s => s.onchange = () => {
+              extras[+s.dataset.ieSel].id = s.value;
+              const m = DB.meat(s.value);
+              extras[+s.dataset.ieSel].nombre = m ? m.nombre : '';
+              hiddenIE.value = JSON.stringify(extras);
+            });
+            wrapper.querySelectorAll('[data-ie-qty]').forEach(inp => inp.oninput = () => {
+              extras[+inp.dataset.ieQty].qty = Math.max(1, parseInt(inp.value,10)||1);
+              hiddenIE.value = JSON.stringify(extras);
+            });
+            wrapper.querySelectorAll('[data-ie-rm]').forEach(b => b.onclick = () => { extras.splice(+b.dataset.ieRm, 1); pintaIE(); });
+            const addBtn = wrapper.querySelector('#ieAdd');
+            if (addBtn) addBtn.onclick = () => { extras.push({id:'', qty:1, nombre:''}); pintaIE(); };
+          };
+          pintaIE();
+        }
+      }, 60);
+    }
   },
   cats(){
     const paint = (ov) => {
@@ -5506,7 +5697,7 @@ Views.inv = {
 
     const f = this.filtros();
     const q = document.getElementById('invQ');
-    if (q) q.oninput = Util.debounce(e => { f.q = e.target.value; Router.render(); }, 200);
+    if (q) q.oninput = Util.debounce(() => { f.q = q.value; Router.render(); }, 200);
     document.querySelectorAll('[data-f]').forEach(b => b.onclick = () => { f.f = b.dataset.f; Router.render(); });
     document.querySelectorAll('[data-v]').forEach(b => b.onclick = () => { f.vista = b.dataset.v; Router.render(); });
   },
@@ -6092,6 +6283,9 @@ Views.comidas = {
 
     let sel = userId || null;
     let carne = null;
+    let cantidadHuevos = 1;
+    /** Detecta si un insumo es de tipo huevo por su nombre */
+    const esHuevo = (insumo) => insumo && /huevo/i.test(Util.norm(insumo.nombre || ''));
     const close = UI.modal({
       title:'Registrar comida del personal', size:'lg',
       body:'<div id="cmBody"></div>',
@@ -6108,7 +6302,7 @@ Views.comidas = {
               activos.map(u => {
                 const comio = DB.mealHoy(u.id);
                 return '<option value="' + u.id + '"' + (u.id===sel?' selected':'') + (comio?' disabled':'') + '>' +
-                  Util.esc(u.nombre) + ' · ' + Util.esc(u.cargo) + (comio ? ' — ya comió hoy' : '') + '</option>';
+                  Util.esc(u.nombre) + ' · ' + Util.esc(u.cargo) + (comio ? ' — ya comió (8h)' : '') + '</option>';
               }).join('') +
             '</select>' +
             (yaComio
@@ -6128,6 +6322,14 @@ Views.comidas = {
                     '<span class="dim">' + (falta ? 'agotada' : Util.cantIns(Math.max(0,disp), x.insumo)) + '</span>' +
                   '</button>';
                 }).join('') + '</div>' +
+                /* Selector de cantidad para Huevos (máx 2 porciones) */
+                '<div id="cmHuevosQty" class="hide" style="margin-top:10px;padding:10px 14px;border-radius:8px;background:rgba(198,168,103,.08)">' +
+                  '<div class="row" style="gap:10px;align-items:center">' +
+                    '<span style="font-size:13px;font-weight:600">Porciones de huevo:</span>' +
+                    '<button class="btn sm' + (cantidadHuevos===1?' gold':'') + '" data-hq="1">1</button>' +
+                    '<button class="btn sm' + (cantidadHuevos===2?' gold':'') + '" data-hq="2">2 (doble)</button>' +
+                  '</div>' +
+                '</div>' +
                 '<label class="f" style="margin-top:14px">Observación' +
                   '<input class="inp" id="cmNota" placeholder="Ej: sin ensalada, para llevar"></label>');
 
@@ -6136,6 +6338,24 @@ Views.comidas = {
           box.querySelectorAll('[data-c]').forEach(b => b.onclick = () => {
             carne = b.dataset.c;
             box.querySelectorAll('[data-c]').forEach(x => x.classList.toggle('on', x === b));
+            /* Mostrar/ocultar selector de cantidad para Huevos */
+            const selInsumo = disponibles.find(x => x.insumo.id === carne);
+            const qtyBox = box.querySelector('#cmHuevosQty');
+            if (qtyBox){
+              if (selInsumo && esHuevo(selInsumo.insumo)){
+                qtyBox.classList.remove('hide');
+                cantidadHuevos = 1;
+                qtyBox.querySelectorAll('[data-hq]').forEach(hb => hb.classList.toggle('gold', hb.dataset.hq === '1'));
+              } else {
+                qtyBox.classList.add('hide');
+                cantidadHuevos = 1;
+              }
+            }
+          });
+          /* Botones de cantidad de huevos */
+          box.querySelectorAll('[data-hq]').forEach(hb => hb.onclick = () => {
+            cantidadHuevos = parseInt(hb.dataset.hq, 10);
+            box.querySelectorAll('[data-hq]').forEach(x => x.classList.toggle('gold', x === hb));
           });
         };
         pinta();
@@ -6143,32 +6363,37 @@ Views.comidas = {
         ov.querySelector('#cmOk').onclick = () => {
           if (!sel) return UI.toast('Elige a la persona.','warn');
           if (DB.d.config.alimentacionUnaVez !== false && DB.mealHoy(sel))
-            return UI.toast('Esa persona ya comió hoy. Queda habilitada mañana.','warn', 4600);
+            return UI.toast('Esa persona ya comió en las últimas 8 horas. Queda habilitada cuando se cumplan.','warn', 4600);
           if (!carne) return UI.toast('Elige la carne.','warn');
           const nota = (box.querySelector('#cmNota')||{}).value || '';
-          const r = Views.comidas.guardar(sel, carne, nota);
+          const r = Views.comidas.guardar(sel, carne, nota, cantidadHuevos);
           if (r) close();
         };
       }
     });
   },
 
-  /** Escribe el registro y descuenta la porción del inventario. */
-  guardar(userId, meatId, nota){
+  /** Escribe el registro y descuenta la porción del inventario.
+      @param {number} porciones — cantidad a descontar (default 1, máx 2 para huevos) */
+  guardar(userId, meatId, nota, porciones){
     const u = DB.personal(true).find(x => x.id === userId);
     const m = DB.meat(meatId);
     if (!u || !m) return UI.toast('Faltan datos del registro.','bad'), false;
     if (DB.d.config.alimentacionUnaVez !== false && DB.mealHoy(userId))
-      return UI.toast('Esa persona ya comió hoy.','warn'), false;
-    if (DB.available(meatId) < 1)
-      return UI.toast('No queda ninguna porción de ' + m.nombre + '.','bad'), false;
+      return UI.toast('Esa persona ya comió en las últimas 8 horas.','warn'), false;
+    /* Determinar cantidad: solo Huevos puede ser 2, todo lo demás forzado a 1 */
+    const esHuevoItem = /huevo/i.test(Util.norm(m.nombre || ''));
+    const cant = esHuevoItem ? Math.min(2, Math.max(1, parseInt(porciones, 10) || 1)) : 1;
+    if (DB.available(meatId) < cant)
+      return UI.toast('No ' + (cant > 1 ? 'quedan ' + cant + ' porciones' : 'queda ninguna porción') + ' de ' + m.nombre + '.','bad'), false;
 
-    m.gramos = Math.max(0, m.gramos - 1);
+    m.gramos = Math.max(0, m.gramos - cant);
     m.act = Util.now();
     const reg = {
       id:Util.uid('cm'), fecha:Util.now(), userId:u.id, userNombre:u.nombre,
       rol:u.cargo, fuente:u.fuente,
-      meatId:m.id, carneNombre:DB.rotulo(m), porciones:1, costo:Math.round(m.costoGramo||0),
+      meatId:m.id, carneNombre:DB.rotulo(m) + (cant > 1 ? ' ×' + cant : ''),
+      porciones:cant, costo:Math.round((m.costoGramo||0) * cant),
       nota:String(nota||'').trim(), registroId:(Auth.user||{}).id, registroNombre:(Auth.user||{}).nombre||'',
       sede:DB.d.config.sedeId, act:Util.now()
     };
@@ -6178,7 +6403,7 @@ Views.comidas = {
       Util.money(reg.costo) + (reg.nota ? ' · ' + reg.nota : ''), reg.id);
     Sync.enqueue('meals','create', reg);
     Sync.enqueue('meats','update', m);
-    UI.toast(u.nombre.split(' ')[0] + ' registrado: ' + m.nombre + '. Queda bloqueado hasta mañana.','ok', 4600);
+    UI.toast(u.nombre.split(' ')[0] + ' registrado: ' + m.nombre + (cant > 1 ? ' ×' + cant + ' porciones' : '') + '. Queda bloqueado hasta mañana.','ok', 4600);
     Router.render();
     return true;
   },
@@ -6470,7 +6695,8 @@ const Clients = {
           ov.querySelectorAll('[data-pick]').forEach(b => b.onclick = () => { close(); cb(b.dataset.pick); });
         };
         paint('');
-        ov.querySelector('#cq').oninput = Util.debounce(e=>paint(e.target.value), 140);
+        const cqEl = ov.querySelector('#cq');
+        cqEl.oninput = Util.debounce(()=>paint(cqEl.value), 140);
         ov.querySelector('#cnew').onclick = () => { close(); Views.clients.form(null, cb); };
       }});
   }
@@ -6503,7 +6729,8 @@ Views.clients = {
         rows, {emptyTitle:'Sin clientes', emptyMsg:'Registra clientes para medir frecuencia y fidelidad.'}) + '</div>';
   },
   mount(){
-    document.getElementById('cq2').oninput = Util.debounce(e=>{ State.filters.cli.q = e.target.value; Router.render(); }, 220);
+    const cq2 = document.getElementById('cq2');
+    cq2.oninput = Util.debounce(() => { State.filters.cli.q = cq2.value; Router.render(); }, 220);
     document.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>this.form(b.dataset.edit));
     document.querySelectorAll('[data-hist]').forEach(b=>b.onclick=()=>this.history(b.dataset.hist));
     document.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>this.remove(b.dataset.del));
@@ -6743,7 +6970,14 @@ Views.gastos = {
   mount(){
     const btn = document.querySelector('[data-act=newgasto]');
     if (btn) btn.onclick = () => this.nuevo();
-    document.querySelectorAll('[data-gdel]').forEach(b => b.onclick = () => this.eliminar(b.dataset.gdel));
+    document.querySelectorAll('[data-gdel]').forEach(b => b.onclick = async () => {
+      if (!Auth.can('admin') && !Auth.can('menu')){
+        /* Cajero: requiere autorización de admin para eliminar */
+        const autorizo = await Auth.autorizar('Eliminar un gasto', 'Se requiere autorización de administrador');
+        if (!autorizo) return;
+      }
+      this.eliminar(b.dataset.gdel);
+    });
   },
   nuevo(){
     const c = DB.openCash();
@@ -6805,12 +7039,14 @@ Views.cash = {
   totals(c){
     const ventas = DB.paid().filter(s => s.fecha >= c.apertura && (!c.cierre || s.fecha <= c.cierre));
     const porMetodo = Metrics.byPayment(ventas);
-    const efectivoVentas = c.movs.filter(m=>m.tipo==='venta').reduce((a,m)=>a+m.monto,0);
+    const efectivoVentas = porMetodo['Efectivo']||0;
+    const transferencias = (porMetodo['Transferencia']||0) + (porMetodo['Nequi']||0) + (porMetodo['Daviplata']||0);
+    const total = ventas.reduce((a,s)=>a+s.total,0);
+    const otrosMedios = Math.max(0, total - efectivoVentas - transferencias);
     const ingresos = c.movs.filter(m=>m.tipo==='ingreso').reduce((a,m)=>a+m.monto,0);
     const egresos = c.movs.filter(m=>m.tipo==='egreso').reduce((a,m)=>a+m.monto,0);
-    const esperado = c.base + efectivoVentas + ingresos + egresos;
-    return {ventas, porMetodo, efectivoVentas, ingresos, egresos, esperado,
-      total:ventas.reduce((a,s)=>a+s.total,0)};
+    const esperado = c.base + total + ingresos + egresos;
+    return {ventas, porMetodo, efectivoVentas, transferencias, otrosMedios, ingresos, egresos, esperado, total};
   },
   html(){
     const c = DB.openCash();
@@ -6820,9 +7056,8 @@ Views.cash = {
       const t = this.totals(c);
       cur = '<div class="grid g-kpi" style="margin-bottom:14px">' +
           UI.kpi('Base inicial', Util.money(c.base), 'Abierta ' + Util.dt(c.apertura)) +
-          UI.kpi('Ventas del turno', Util.money(t.total), t.ventas.length + ' facturas') +
-          UI.kpi('Efectivo esperado', Util.money(t.esperado), 'Base + efectivo + movimientos') +
-          UI.kpi('Otros medios', Util.money(t.total - t.efectivoVentas), 'Tarjetas y transferencias') +
+          UI.kpi('Ventas del turno', Util.money(t.total), t.ventas.length + ' facturas · Ef: ' + Util.money(t.efectivoVentas) + ' · Tr: ' + Util.money(t.transferencias)) +
+          UI.kpi('Total esperado', Util.money(t.esperado), 'Base + ventas + mov.') +
         '</div>' +
         '<div class="grid g-2">' +
           '<div class="card pad0"><div class="card-h"><h3>Desglose por medio de pago</h3></div><div style="padding:16px">' +
@@ -6923,12 +7158,22 @@ Views.cash = {
     const t = this.totals(c);
     UI.formModal({title:'Arqueo y cierre de caja', ok:'Cerrar turno',
       extra:'<div class="card" style="margin-top:12px">' +
+        '<div class="eyebrow" style="margin-bottom:8px">Resumen de ventas del turno</div>' +
+        '<div class="tot-row"><span>Total facturado (' + t.ventas.length + ' facturas)</span><b>' + Util.money(t.total) + '</b></div>' +
+        '<div class="tot-row" style="padding-left:14px;font-size:13px;color:var(--ash)"><span>· Efectivo</span><b>' + Util.money(t.efectivoVentas) + '</b></div>' +
+        '<div class="tot-row" style="padding-left:14px;font-size:13px;color:var(--ash)"><span>· Transferencias (Nequi, Daviplata)</span><b>' + Util.money(t.transferencias) + '</b></div>' +
+        (t.otrosMedios ? '<div class="tot-row" style="padding-left:14px;font-size:13px;color:var(--ash)"><span>· Otros medios</span><b>' + Util.money(t.otrosMedios) + '</b></div>' : '') +
+        '<hr style="border-color:var(--line);margin:10px 0">' +
+        '<div class="eyebrow" style="margin-bottom:8px">Consolidado de caja</div>' +
         '<div class="tot-row"><span>Base inicial</span><b>' + Util.money(c.base) + '</b></div>' +
-        '<div class="tot-row"><span>Ventas en efectivo</span><b>' + Util.money(t.efectivoVentas) + '</b></div>' +
-        '<div class="tot-row"><span>Otros ingresos</span><b>' + Util.money(t.ingresos) + '</b></div>' +
+        '<div class="tot-row"><span>Ventas del turno</span><b>' + Util.money(t.total) + '</b></div>' +
+        '<div class="tot-row" style="padding-left:14px;font-size:13px;color:var(--ash)"><span>· Efectivo</span><b>' + Util.money(t.efectivoVentas) + '</b></div>' +
+        '<div class="tot-row" style="padding-left:14px;font-size:13px;color:var(--ash)"><span>· Transferencias</span><b>' + Util.money(t.transferencias) + '</b></div>' +
+        (t.otrosMedios ? '<div class="tot-row" style="padding-left:14px;font-size:13px;color:var(--ash)"><span>· Otros medios</span><b>' + Util.money(t.otrosMedios) + '</b></div>' : '') +
+        (t.ingresos ? '<div class="tot-row"><span>Otros ingresos</span><b>' + Util.money(t.ingresos) + '</b></div>' : '') +
         '<div class="tot-row"><span>Egresos</span><b>' + Util.money(t.egresos) + '</b></div>' +
-        '<div class="tot-grand"><span>Esperado en caja</span><b>' + Util.money(t.esperado) + '</b></div></div>',
-      fields:[{k:'contado', label:'Efectivo contado', type:'number', val:t.esperado, min:0, req:true, full:true},
+        '<div class="tot-grand"><span>Total esperado</span><b>' + Util.money(t.esperado) + '</b></div></div>',
+      fields:[{k:'contado', label:'Total contado (efectivo + transferencias)', type:'number', val:t.esperado, min:0, req:true, full:true},
               {k:'nota', label:'Observación del cierre', type:'textarea', val:'', full:true}],
       onSave(d, close){
         c.estado = 'cerrada'; c.cierre = Util.now(); c.esperado = t.esperado; c.contado = d.contado;
@@ -7054,12 +7299,29 @@ const Reports = {
         .sort((a,b) => a.fecha < b.fecha ? 1 : -1); }},
     caja:{t:'Caja', cols:[
       {k:'apertura',t:'Apertura',f:'dt'},{k:'cierre',t:'Cierre',f:'dt'},{k:'responsable',t:'Responsable'},
-      {k:'base',t:'Base',n:1,f:'$'},{k:'esperado',t:'Esperado',n:1,f:'$'},{k:'contado',t:'Contado',n:1,f:'$'},
+      {k:'base',t:'Base',n:1,f:'$'},{k:'totalVentas',t:'Total ventas',n:1,f:'$'},
+      {k:'efectivo',t:'Efectivo',n:1,f:'$'},{k:'transferencia',t:'Transferencia',n:1,f:'$'},
+      {k:'otrosMedios',t:'Otros medios',n:1,f:'$'},
+      {k:'ingresos',t:'Ingresos',n:1,f:'$'},{k:'egresos',t:'Egresos',n:1,f:'$'},
+      {k:'esperado',t:'Esperado',n:1,f:'$'},{k:'contado',t:'Contado',n:1,f:'$'},
       {k:'diferencia',t:'Diferencia',n:1,f:'$'}],
       build(v, from, to){ return DB.d.cash.filter(c=>c.apertura.slice(0,10)>=from && c.apertura.slice(0,10)<=to)
-        .map(c=>({apertura:c.apertura, cierre:c.cierre, responsable:(DB.user(c.userId)||{}).nombre||'—',
-          base:c.base, esperado:c.esperado||0, contado:c.contado||0, diferencia:(c.contado||0)-(c.esperado||0)}))
-        .sort((a,b)=>a.apertura<b.apertura?1:-1); }},
+        .map(c=>{
+          const ventas = DB.paid().filter(s => s.fecha >= c.apertura && (!c.cierre || s.fecha <= c.cierre));
+          const porMetodo = {};
+          ventas.forEach(s => (s.pagos||[]).forEach(p => { porMetodo[p.metodo] = (porMetodo[p.metodo]||0) + p.monto; }));
+          const totalVentas = ventas.reduce((a,s)=>a+s.total,0);
+          const efVentas = porMetodo['Efectivo']||0;
+          const transf = (porMetodo['Transferencia']||0) + (porMetodo['Nequi']||0) + (porMetodo['Daviplata']||0);
+          const otrosMedios = totalVentas - efVentas - transf;
+          const ingresos = c.movs.filter(m=>m.tipo==='ingreso').reduce((a,m)=>a+m.monto,0);
+          const egresos = c.movs.filter(m=>m.tipo==='egreso').reduce((a,m)=>a+m.monto,0);
+          const esperadoCalc = c.estado==='cerrada' ? (c.esperado||0) : (c.base + totalVentas + ingresos + egresos);
+          return {apertura:c.apertura, cierre:c.cierre, responsable:(DB.user(c.userId)||{}).nombre||'—',
+            base:c.base, totalVentas, efectivo:efVentas, transferencia:transf, otrosMedios:Math.max(0,otrosMedios),
+            ingresos, egresos, esperado:esperadoCalc, contado:c.contado||0,
+            diferencia:(c.contado||0)-(esperadoCalc)};
+        }).sort((a,b)=>a.apertura<b.apertura?1:-1); }},
     alimentacion:{t:'Alimentación', cols:[
       {k:'fecha',t:'Fecha',f:'dt'},{k:'persona',t:'Persona'},{k:'rol',t:'Rol'},
       {k:'carne',t:'Carne'},{k:'nota',t:'Observación'},{k:'registro',t:'Registró'},
@@ -7470,7 +7732,8 @@ Views.audit = {
         {emptyTitle:'Sin registros', emptyMsg:'Las acciones del equipo se registran automáticamente.'}) + '</div>';
   },
   mount(){
-    document.getElementById('aq').oninput = Util.debounce(e=>{ State.filters.aud.q = e.target.value; Router.render(); }, 220);
+    const aq = document.getElementById('aq');
+    aq.oninput = Util.debounce(() => { State.filters.aud.q = aq.value; Router.render(); }, 220);
     document.querySelector('[data-x]').onclick = () => Reports.csv('auditoria', DB.d.audit.map(a=>({
       fecha:a.fecha, usuario:a.usuario, rol:a.rol, accion:a.accion, detalle:a.detalle})));
   }
