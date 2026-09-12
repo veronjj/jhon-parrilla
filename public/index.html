@@ -306,6 +306,33 @@ input[type=number].inp{font-family:var(--mono)}
   font-size:12.5px;font-weight:500;white-space:nowrap;color:var(--ash);transition:.14s var(--ease)}
 .chip:hover{color:var(--bone);border-color:var(--brass-dim)}
 .chip.on{background:var(--bone);color:var(--char-900);border-color:var(--bone);font-weight:600}
+/* INTERVENCIÓN: resaltado propio para la adición con cargo que se está
+   seleccionando (antes de confirmar el precio), independiente de .chip.on
+   (que se usa para marcar adiciones ya agregadas) para que la selección
+   se evidencie claramente y no se pierda al usar otros chips. */
+.chip.ad-sel{background:var(--brass);color:#191512;border-color:var(--brass-hi);
+  font-weight:700;box-shadow:0 0 0 2px var(--brass-hi) inset}
+
+/* INTERVENCIÓN: espacio amplio y ajustado en cuadrícula para las
+   "Adiciones con cargo", con botones grandes (ícono + nombre) fáciles
+   de tocar. No reemplaza la lógica de .chip (data-adchip sigue igual),
+   solo mejora el contenedor y el tamaño de cada botón.
+   CORRECCIÓN: se retira el scroll interno (max-height/overflow-y) que
+   dejaba la zona muy reducida y "atrapaba" el toque impidiendo
+   seleccionar — ahora la cuadrícula crece con su contenido y el
+   scroll lo maneja el propio modal (.modal-b ya tiene overflow-y:auto). */
+.ad-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px;
+  padding:10px;border:1px solid var(--line);border-radius:var(--r);
+  background:rgba(255,255,255,.02)}
+.ad-chip{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
+  padding:14px 6px;min-height:64px;border-radius:10px;border:1px solid var(--line);background:var(--char-800);
+  font-size:12px;font-weight:600;color:var(--ash);text-align:center;line-height:1.15;
+  cursor:pointer;transition:.14s var(--ease)}
+.ad-chip .ad-chip-ico{font-size:20px;line-height:1}
+.ad-chip:hover{color:var(--bone);border-color:var(--brass-dim)}
+.ad-chip.on{background:var(--bone);color:var(--char-900);border-color:var(--bone);opacity:.55}
+.ad-chip.ad-sel{background:var(--brass);color:#191512;border-color:var(--brass-hi);
+  box-shadow:0 0 0 2px var(--brass-hi) inset}
 
 .badge{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:99px;font-size:10.5px;font-weight:600;
   letter-spacing:.03em;border:1px solid transparent}
@@ -440,36 +467,39 @@ td.n,th.n{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-
 .toast.ok{border-left:3px solid var(--ok)} .toast.bad{border-left:3px solid var(--bad)}
 .toast.warn{border-left:3px solid var(--warn)} .toast.info{border-left:3px solid var(--info)}
 @keyframes slide{from{opacity:0;transform:translateX(30px)}}
+.toast.comanda-ok{position:fixed;top:18px;left:50%;transform:translateX(-50%);
+  min-width:min(92vw,440px);max-width:min(96vw,520px);
+  background:var(--ok);color:#fff;border:none;border-radius:12px;
+  font-size:15px;font-weight:700;letter-spacing:.02em;text-align:center;
+  justify-content:center;padding:14px 22px;
+  box-shadow:0 8px 32px -8px rgba(0,0,0,.55);
+  animation:comanda-drop .32s var(--ease)}
+@keyframes comanda-drop{from{opacity:0;transform:translateX(-50%) translateY(-22px) scale(.97)}}
 
 /* ── Ticket térmico ──────────────────────────────────────────────────── */
-.ticket{background:#fff;color:#111;font-family:var(--mono);font-size:11.5px;line-height:1.42;
-  padding:14px 12px;width:302px;margin:0 auto}
+.ticket{background:#fff;color:#111;font-family:var(--mono);font-size:11.5px;line-height:1.18;
+  padding:10px 10px;width:302px;margin:0 auto}
 .ticket.w58{width:210px;font-size:10.5px}
-.ticket hr{border:0;border-top:1px dashed #999;margin:7px 0}
+.ticket hr{border:0;border-top:1px dashed #999;margin:3px 0}
 .ticket .c{text-align:center}
 .ticket .b{font-weight:700}
-.ticket .lg{font-size:14px;letter-spacing:.14em}
-.ticket table{width:100%;font-size:inherit}
-.ticket td{padding:1px 0;border:0;color:#111}
+.ticket .lg{font-size:13px;letter-spacing:.1em}
+.ticket table{width:100%;font-size:inherit;border-collapse:collapse}
+.ticket td{padding:0;border:0;color:#111;line-height:1.18}
 .ticket .r{text-align:right}
-/* Comanda de cocina. Todo se mide en `em` sobre el tamaño base del ticket:
-   al cambiar de rollo cambia una sola cifra y el resto se acomoda solo. */
-.ticket.comanda{font-size:13px;line-height:1.5}
-.ticket.comanda.w58{font-size:11px}
-.ticket.comanda .cm-rot{font-size:1.3em;font-weight:700;letter-spacing:.1em}
-.ticket.comanda .cm-avi{font-size:1.1em;font-weight:700;letter-spacing:.06em;
-  border:2px dashed #111;padding:4px 2px;margin-top:5px}
-.ticket.comanda .cm-tipo{font-size:1.5em;font-weight:700;letter-spacing:.1em;
-  margin:4px 0;border:2px solid #111;padding:3px 0}
-.ticket.comanda .cm-mesa{font-size:2em;font-weight:700;margin:4px 0;line-height:1.15}
-.ticket.comanda .cm-ronda{font-size:1.15em;font-weight:700;letter-spacing:.08em;
-  margin:7px 0 4px;border-top:2px solid #111;padding-top:4px}
-.ticket.comanda .cm-it{margin-bottom:.55em}
-.ticket.comanda .cm-nom{font-size:1.25em;font-weight:700}
-.ticket.comanda .cm-car{font-size:1.15em;font-weight:700}
-.ticket.comanda .cm-can{font-size:.85em}
-.ticket.comanda .cm-not,.ticket.comanda .cm-adi{font-size:1.08em;font-weight:700}
 .ticket-frame{background:#2a2a2a;padding:16px;border-radius:var(--r);max-height:52vh;overflow:auto}
+.ticket .tk-titulo{font-size:15px;letter-spacing:.1em}
+.ticket .tk-mesa{font-size:22px;margin:3px 0}
+.ticket .tk-sub{font-size:10px}
+.ticket .tk-item{margin-bottom:5px}
+.ticket .tk-item-nm{font-size:14px}
+.ticket .tk-item-p{font-size:19px;font-weight:800;color:#111;text-align:right;
+  display:block;margin:3px 0 2px;letter-spacing:-.01em;line-height:1.15}
+.ticket .tk-item-carne{font-size:13px;font-weight:700}
+.ticket .tk-item-nota{font-size:12px;font-weight:700}
+.ticket .tk-item-ad{font-size:12px;font-weight:700;color:#333;width:100%}
+.ticket .tk-item-porc{font-size:10px}
+.ticket .tk-llevar{font-size:17px;letter-spacing:.1em;border:2px solid #111;padding:2px 0;margin:3px 0}
 
 /* ── Gráficos ────────────────────────────────────────────────────────── */
 .chart{width:100%;height:auto;display:block;overflow:visible}
@@ -563,6 +593,16 @@ tr.fila-total td{border-top:1.5px solid var(--brass-dim);font-weight:700;color:v
   border:1px solid var(--brass-dim);border-radius:99px;padding:0 6px;margin-left:6px;vertical-align:middle}
 .kfoot{display:flex;gap:8px;padding:11px 13px;border-top:1px solid var(--line-soft);background:var(--char-800)}
 .kfoot .btn{flex:1;padding:11px 10px;font-size:13px}
+/* Estados en KDS (Cocina): mismo tamaño que Comandas, color dorado/ámbar mantenido */
+.kfoot .badge{font-size:15px !important;font-weight:800;letter-spacing:.07em;
+  padding:8px 14px !important;border-radius:8px;text-transform:uppercase;
+  min-width:100px;text-align:center}
+.kfoot .badge.warn{background:rgba(201,130,31,.28);color:#F5C46A;border-color:rgba(201,130,31,.6);
+  box-shadow:0 0 0 1px rgba(201,130,31,.4),0 0 10px -4px rgba(201,130,31,.5)}
+.kfoot .badge.info{background:rgba(62,124,155,.28);color:#8FD0EB;border-color:rgba(62,124,155,.6);
+  box-shadow:0 0 0 1px rgba(62,124,155,.4),0 0 10px -4px rgba(62,124,155,.5)}
+.kfoot .badge.ok{background:rgba(62,155,98,.28);color:#7EE0A4;border-color:rgba(62,155,98,.6);
+  box-shadow:0 0 0 1px rgba(62,155,98,.4),0 0 10px -4px rgba(62,155,98,.5)}
 .mesa-card{background:var(--char-850);border:1px solid var(--line-soft);border-radius:var(--r-lg);padding:14px;
   display:flex;flex-direction:column;gap:10px}
 .mesa-card.on{border-color:var(--brass-dim)}
@@ -736,18 +776,30 @@ tr.fila-total td{border-top:1.5px solid var(--brass-dim);font-weight:700;color:v
   .qr-url{color:#000;font-size:20px}
   .pasos-n li{color:#000} .pasos-n li::before{background:#000}
   body::before,#aside,#top,#tabbar,#toasts,.modal-h,.modal-f,#cartfab{display:none !important}
-  /* La ventana entra con un desvanecido que arranca en opacidad 0. Si la
-     impresión se dispara antes de que termine, sale la hoja en blanco. Al
-     imprimir no hay animaciones que valgan. */
-  .ov{position:static;background:none;padding:0;margin:0;backdrop-filter:none;animation:none;opacity:1}
-  .modal{max-width:none;max-height:none;border:0;box-shadow:none;background:#fff;
+  .ov{position:static;background:#fff !important;padding:0;margin:0;backdrop-filter:none;box-shadow:none !important}
+  .modal{max-width:none;max-height:none;border:0;box-shadow:none;background:#fff !important;
     border-radius:0;display:block;animation:none;padding:0;margin:0}
   .modal-b{padding:0;margin:0;overflow:visible;display:block}
-  .ticket-frame{background:none;padding:0;margin:0;max-height:none;overflow:visible}
-  .ticket{width:100%;margin:0;padding:2mm 3mm 10mm 3mm}
-  /* El ancho lo fija el tamaño de página (ver UI.imprimir), no una medida en
-     píxeles: así el mismo documento sirve para 58 y para 80 mm. */
-  .ticket.w58{width:100%}
+  .ticket-frame{background:#fff !important;padding:0;margin:0;max-height:none;overflow:visible;
+    box-shadow:none !important;border-radius:0 !important}
+  *{-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important;color-adjust:exact !important}
+  .ticket{width:100%;margin:0;padding:1mm 2mm 6mm 2mm;line-height:1.28;font-size:11px;color:#000}
+  .ticket.w58{font-size:10px}
+  .ticket hr{margin:2px 0;border-top-color:#000}
+  .ticket td{padding:0;line-height:1.28;color:#000}
+  .ticket .lg{font-size:12px;letter-spacing:.08em}
+  .ticket .tk-titulo{font-size:13px;letter-spacing:.08em}
+  .ticket .tk-mesa{font-size:18px;margin:2px 0}
+  .ticket .tk-sub{font-size:9px}
+  .ticket .tk-item{margin-bottom:4px;break-inside:avoid;page-break-inside:avoid}
+  .ticket .tk-item-nm{font-size:12px}
+  .ticket .tk-item-p{font-size:22px;font-weight:800;color:#000;text-align:right;display:block;margin:3px 0 2px}
+  .ticket .tk-item-carne{font-size:11px}
+  .ticket .tk-item-nota{font-size:10px}
+  .ticket .tk-item-ad{font-size:10px;color:#000}
+  .ticket .tk-item-porc{font-size:9px}
+  .ticket .tk-llevar{font-size:14px;padding:1px 0;margin:2px 0;border-color:#000}
+  tr,.tk-item,.c{break-inside:avoid;page-break-inside:avoid;orphans:2;widows:2}
   .no-print{display:none !important}
 
   /* Documento único: cuando la impresión la dispara el sistema (body.imprimiendo)
@@ -1010,7 +1062,8 @@ const Util = {
       fire:'M12 22c3.9 0 7-2.6 7-6.4 0-2.8-1.7-4.6-3.1-6.2-1.4-1.6-2-3.4-1.9-5.4-2.6 1-4 3-4 5.6 0 1.2.3 2 .3 2S9.3 10.7 8.2 11.8C6.7 13.3 5 14.9 5 17c0 3 3.1 5 7 5z',
       table:'M3 7h18M5 7v11M19 7v11M3 13h18M10 13v5M14 13v5',
       bell:'M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 01-3.4 0',
-      comida:'M12 3a3.5 3.5 0 100 7 3.5 3.5 0 000-7M3 20c0-4.4 3.6-8 8-8h2c4.4 0 8 3.6 8 8M6 14v-3M18 14v-3M12 21v-6'
+      comida:'M12 3a3.5 3.5 0 100 7 3.5 3.5 0 000-7M3 20c0-4.4 3.6-8 8-8h2c4.4 0 8 3.6 8 8M6 14v-3M18 14v-3M12 21v-6',
+      moto:'M5 17H3a2 2 0 01-2-2v-5a2 2 0 012-2h1M5 17h14M5 17a2 2 0 100 4 2 2 0 000-4M19 17a2 2 0 100 4 2 2 0 000-4M9 8h10l2 5H7M12 3v2M7 8l2-5'
     };
     const d = P[name] || P.dash;
     return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="'+(cls||'')+'">'+
@@ -1491,25 +1544,25 @@ const DB = {
       P('CAR-002','Punta de anca','c_car',56000,19000,'corte',1,'Punta de anca',22,'Corte insignia, t\u00e9rmino a elecci\u00f3n'),
       P('CAR-003','Lomo fino','c_car',62000,21000,'corte',1,'Lomo fino',16,'El corte m\u00e1s suave de la carta'),
       P('CAR-004','Baby beef','c_car',72000,24000,'corte',1,'Baby beef',20,'Res joven, sellado al carb\u00f3n'),
-      P('CAR-005','Costilla BBQ','c_car',52000,16000,'costilla',1,'Costilla de cerdo',28,'Cocci\u00f3n lenta, salsa BBQ ahumada'),
-      P('CAR-006','Pechuga a la parrilla','c_car',38000,10000,'pollo',1,'Pechuga de pollo',15,'Marinada en hierbas'),
-      P('ENT-001','Chorizo santarrosano','c_ent',14000,5000,'chorizo',0,null,8,''),
-      P('ENT-002','Empanadas de carne (3)','c_ent',12000,4000,'empanada',0,null,7,''),
-      P('ENT-003','Patac\u00f3n con hogao','c_ent',11000,3500,'arepa',0,null,9,''),
+      P('CAR-005','Costilla BBQ','c_asa',52000,16000,'costilla',1,'Costilla de cerdo',28,'Cocci\u00f3n lenta, salsa BBQ ahumada'),
+      P('CAR-006','Pechuga a la parrilla','c_asa',38000,10000,'pollo',1,'Pechuga de pollo',15,'Marinada en hierbas'),
+      P('ENT-001','Chorizo santarrosano','c_por',14000,5000,'chorizo',0,null,8,''),
+      P('ENT-002','Empanadas de carne (3)','c_por',12000,4000,'empanada',0,null,7,''),
+      P('ENT-003','Patac\u00f3n con hogao','c_por',11000,3500,'arepa',0,null,9,''),
       P('BEB-001','Gaseosa 400 ml','c_beb',5000,2000,'botella',0,null,1,''),
       P('BEB-002','Limonada de coco','c_beb',12000,4000,'vaso',0,null,4,''),
       P('BEB-003','Jugo natural','c_beb',9000,3000,'vaso',0,null,4,''),
       P('BEB-004','Cerveza nacional','c_beb',7000,3200,'jarra',0,null,1,''),
       P('BEB-005','Agua sin gas','c_beb',4000,1500,'agua',0,null,1,''),
-      P('ACO-001','Papa criolla','c_aco',9000,3000,'papa',0,null,8,''),
-      P('ACO-002','Yuca frita','c_aco',8000,2500,'fritos',0,null,8,''),
-      P('ACO-003','Ensalada de la casa','c_aco',10000,3200,'ensalada',0,null,5,''),
-      P('ACO-004','Arepa de ma\u00edz','c_aco',4000,1200,'arepa',0,null,4,''),
-      P('POS-001','Flan de caramelo','c_pos',11000,3500,'postre',0,null,3,''),
-      P('POS-002','Postre de natas','c_pos',12000,4000,'torta',0,null,3,''),
-      P('COM-001','Combo parrilla personal','c_com',65000,22000,'combo',1,'Churrasco',22,'Churrasco 400 g + 2 acompa\u00f1amientos + bebida'),
-      P('COM-002','Picada para dos','c_com',89000,31000,'combo',2,'Costilla de cerdo',26,'Costilla, chorizo, papa criolla y arepa'),
-      P('PRO-001','Martes de costilla','c_pro',39000,16000,'promo',1,'Costilla de cerdo',28,'Promoci\u00f3n v\u00e1lida los martes')
+      P('POR-001','Papa criolla','c_por',9000,3000,'papa',0,null,8,''),
+      P('POR-002','Yuca frita','c_por',8000,2500,'fritos',0,null,8,''),
+      P('POR-003','Ensalada de la casa','c_por',10000,3200,'ensalada',0,null,5,''),
+      P('POR-004','Arepa de ma\u00edz','c_por',4000,1200,'arepa',0,null,4,''),
+      P('ESP-001','Flan de caramelo','c_esp',11000,3500,'postre',0,null,3,''),
+      P('ESP-002','Postre de natas','c_esp',12000,4000,'torta',0,null,3,''),
+      P('BAN-001','Combo parrilla personal','c_ban',65000,22000,'combo',1,'Churrasco',22,'Churrasco 400 g + 2 acompa\u00f1amientos + bebida'),
+      P('BAN-002','Picada para dos','c_ban',89000,31000,'combo',2,'Costilla de cerdo',26,'Costilla, chorizo, papa criolla y arepa'),
+      P('ECO-001','Martes de costilla','c_eco',39000,16000,'promo',1,'Costilla de cerdo',28,'Promoci\u00f3n v\u00e1lida los martes')
     ];
     // Las bebidas en envase se cuentan por unidad, una entrada por presentación.
     const bebidas = [
@@ -1532,13 +1585,14 @@ const DB = {
   },
   defaults(){
     const cats = [
-      {id:'c_car', nombre:'Carnes',          ico:'corte', orden:1, act:Util.now()},
-      {id:'c_ent', nombre:'Entradas',        ico:'ensalada', orden:2, act:Util.now()},
-      {id:'c_beb', nombre:'Bebidas',         ico:'botella', orden:3, act:Util.now()},
-      {id:'c_aco', nombre:'Acompa\u00f1amientos', ico:'fritos', orden:4, act:Util.now()},
-      {id:'c_pos', nombre:'Postres',         ico:'torta', orden:5, act:Util.now()},
-      {id:'c_com', nombre:'Combos',          ico:'combo', orden:6, act:Util.now()},
-      {id:'c_pro', nombre:'Promociones',     ico:'promo', orden:7, act:Util.now()}
+      {id:'c_ban', nombre:'Bandejas',        ico:'combo', orden:1, act:Util.now()},
+      {id:'c_eco', nombre:'Económicos',      ico:'corte', orden:2, act:Util.now()},
+      {id:'c_asa', nombre:'Asados',          ico:'costilla', orden:3, act:Util.now()},
+      {id:'c_esp', nombre:'Especiales',      ico:'corte', orden:4, act:Util.now()},
+      {id:'c_des', nombre:'Desayunos',       ico:'combo', orden:5, act:Util.now()},
+      {id:'c_beb', nombre:'Bebidas',         ico:'botella', orden:6, act:Util.now()},
+      {id:'c_por', nombre:'Porciones',       ico:'fritos', orden:7, act:Util.now()},
+      {id:'c_car', nombre:'Carnes',          ico:'corte', orden:8, act:Util.now()}
     ];
 
     return {
@@ -1593,11 +1647,24 @@ const DB = {
     if (migrados) this.touch('meats');
     this.aPorciones();
     this.asegurarAcceso();
+    /* Respaldar PINs en clave aparte: si al actualizar el archivo los usuarios
+       se restauraran de fábrica, los PINs reales se recuperan automáticamente. */
+    const pinBk = await Persist.get('jp_bk_pins');
     if (virgen){
-      const pin = await Util.hash('1234');
-      this.d.users.forEach(u => u.pin = pin);
+      if (pinBk && Array.isArray(pinBk)){
+        // Restaurar PINs del respaldo (el archivo es nuevo pero había PINs guardados)
+        pinBk.forEach(pb => {
+          const u = this.d.users.find(x => x.id === pb.id || x.usuario === pb.usuario);
+          if (u && pb.pin) u.pin = pb.pin;
+        });
+      } else {
+        const pin = await Util.hash('1234');
+        this.d.users.forEach(u => { if (!u.pin) u.pin = pin; });
+      }
       await this.saveAll();
     }
+    // Siempre respaldar los PINs actuales
+    await Persist.set('jp_bk_pins', this.d.users.map(u => ({id:u.id, usuario:u.usuario, pin:u.pin})));
     return virgen;
   },
   /** Las carnes se contaban en gramos y ahora se cuentan en porciones. Lo ya
@@ -1772,7 +1839,11 @@ const DB = {
   mealsOf(fecha){ return this.meals().filter(m => m.fecha.slice(0,10) === (fecha || Util.today())); },
   /** El registro de hoy de una persona, si ya comió. */
   mealHoy(userId, fecha){
-    return this.mealsOf(fecha).find(m => m.userId === userId) || null;
+    const meals = this.mealsOf(fecha);
+    const ahora = Date.now();
+    const HORAS_BLOQUEO = 8;
+    return meals.find(m => m.userId === userId &&
+      (ahora - new Date(m.fecha).getTime()) < HORAS_BLOQUEO * 3600000) || null;
   },
   ABIERTAS:['pendiente','preparando','listo','entregado'],
   openOrders(){ return this.orders().filter(o => this.ABIERTAS.includes(o.estado)); },
@@ -2061,8 +2132,8 @@ const Sync = {
    ------------------------------------------------------------------- */
 const PERMS = {
   admin:      ['*'],
-  supervisor: ['dash','pos','comandas','kds','cobrar','menu','inv','buy','clients','cash','reports','audit','sync','descuento','anular','cerrarcaja','alimentacion'],
-  cajero:     ['dash','pos','comandas','kds','cobrar','inv:read','clients','cash','sync','descuento','cerrarcaja','alimentacion'],
+  supervisor: ['dash','pos','comandas','kds','cobrar','menu','inv','buy','clients','cash','reports','audit','sync','descuento','anular','cerrarcaja','alimentacion','gastos'],
+  cajero:     ['dash','pos','comandas','kds','cobrar','inv','clients','cash','sync','descuento','cerrarcaja','alimentacion','reports','gastos','gastos:add'],
   mesero:     ['pos','comandas','inv:read','clients'],
   cocina:     ['kds','comandas:read','inv:read']
 };
@@ -2521,40 +2592,331 @@ const UI = {
   },
 
   /* --- impresión ---
-     Marca la ventana que se va a imprimir para que salga esa y solo esa.
-     La marca se retira al terminar, o a los pocos segundos si el navegador
-     no avisa (algunos móviles no lanzan el aviso de fin de impresión). */
-  imprimir(ov, ancho){
-    const docs = document.querySelectorAll('#modals .ov');
-    docs.forEach(x => x.classList.remove('print-doc'));
+     Imprime SOLO el documento (comanda, precuenta o factura) en una página
+     aislada, nunca la pantalla del POS de fondo.
+     Antes se marcaba la ventana con una clase y se llamaba a window.print()
+     sobre toda la página, confiando en que las reglas @media print
+     ocultaran el resto de la app. Eso falla en tablets que imprimen a
+     térmica mediante una app puente (RawBT, apps de "impresión en red",
+     drivers de fabricante, etc.): muchas de esas apps capturan la pantalla
+     o el DOM tal cual está, sin respetar display:none ni @media print, y
+     terminan imprimiendo el punto de venta completo en vez del ticket.
+     La solución es no depender de que el medio de impresión respete CSS:
+     se arma un documento nuevo que contiene ÚNICAMENTE el ticket (con su
+     propio CSS embebido) en un iframe oculto, y se imprime ese documento
+     aislado. Así, sin importar cómo capture la impresión el dispositivo,
+     lo único que existe para capturar es el ticket. */
+
+  /** Detecta si el dispositivo es una tablet o móvil (pantalla táctil sin mouse).
+      Se usa para escalar la fuente en tablets y para elegir el método de impresión. */
+  esTablet(){
+    try{ return matchMedia('(pointer: coarse)').matches && matchMedia('(hover: none)').matches; }
+    catch(e){ return false; }
+  },
+
+  /** Detecta iOS / iPadOS con precisión.
+      iPad en iOS 13+ reporta userAgent de desktop Mac pero tiene maxTouchPoints > 1.
+      iPhone siempre lleva 'iPhone' en el UA.
+      Esta detección determina si usamos window.open() en lugar del iframe oculto,
+      porque Safari en iOS/iPadOS no puede llamar .print() sobre un iframe con
+      width:0 / height:0 / visibility:hidden: el diálogo de impresión captura la
+      pantalla visible (el overlay negro de la app) en lugar del contenido del iframe. */
+  esIOS(){
+    try{
+      const ua = navigator.userAgent || '';
+      if (/iphone|ipad/i.test(ua)) return true;
+      // iPad con iOS 13+: se identifica como Mac pero tiene toque
+      if (/macintosh/i.test(ua) && navigator.maxTouchPoints > 1) return true;
+      return false;
+    }catch(e){ return false; }
+  },
+
+  /** CSS del documento aislado que se manda a imprimir.
+      anchoMm: ancho físico del rollo ('58' o '80'), para fijar @page y que
+        el controlador de la impresora no pagine como si fuera una hoja
+        carta/A4 -- esa paginación fantasma es la causa raíz de los cortes
+        y silencios intermitentes al imprimir desde el computador: el
+        driver cree que hay "página 2, página 3…" y avanza papel en blanco
+        entre cada una en vez de imprimir todo seguido.
+      tablet: si es true, la letra se escala un poco más grande (pedido
+        para impresión desde tablet).
+      El resto de reglas (negro puro, sin degradados, sin cortes de
+      elemento a mitad de línea) atacan la causa raíz de las manchas y el
+      entrelineado irregular: los grises intermedios (#444, #333, etc.) y
+      las imágenes con antialiasing se convierten en tramado de puntos al
+      pasar por una cabeza térmica monocromática, y eso es lo que se ve
+      como "borroso". Forzando negro puro y desactivando el ajuste de
+      color del navegador, la impresora recibe solo blanco/negro sólido. */
+  ticketCSS(anchoMm, tablet){
+    const e = tablet ? 1.15 : 1; // escala de fuente para tablet (+15%)
+    const px = (n) => (Math.round(n*e*10)/10) + 'px';
+    return (
+      '@page{size:' + anchoMm + 'mm auto;margin:0}' +
+      // CORRECCIÓN 1: Reset universal de fondo y pseudo-elementos.
+      // En WebKit (iOS/iPadOS) los pseudo-elementos ::before y ::after del
+      // documento padre pueden "filtrarse" al iframe si el motor los resuelve
+      // antes de que la hoja generada termine de cascadear. Se neutralizan
+      // aquí de forma explícita para que el iframe sea 100% blanco.
+      '*,*::before,*::after{box-sizing:border-box;background:none !important;' +
+        'background-image:none !important;background-color:transparent !important;' +
+        'box-shadow:none !important;text-shadow:none !important;' +
+        'border-color:#000 !important;color:#000 !important}' +
+      // CORRECCIÓN 2: html y body con fondo blanco explícito y sin efectos.
+      // Los drivers de impresión de Android e iOS capturan el body del iframe
+      // como imagen antes de enviarlo a la térmica; si el body tiene cualquier
+      // color o degradado, ese color aparece como fondo de página en el papel.
+      'html,body{margin:0;padding:0;background:#fff !important;' +
+        'background-image:none !important;background-color:#fff !important}' +
+      'img{background:#fff !important;background-color:#fff !important}' +
+      // CORRECCIÓN 3: .ticket-frame era el portador del fondo #2a2a2a (gris
+      // carbón) que entraba al iframe a través de outerHTML. Se fuerza blanco
+      // y se eliminan todos los efectos visuales de pantalla.
+      '.ticket-frame{background:#fff !important;background-color:#fff !important;' +
+        'padding:0 !important;margin:0 !important;' +
+        'box-shadow:none !important;border-radius:0 !important;' +
+        'max-height:none !important;overflow:visible !important;' +
+        'border:none !important}' +
+      '.ov,.modal{background:#fff !important;background-color:#fff !important;' +
+        'box-shadow:none !important;border:0 !important;' +
+        'position:static !important;padding:0 !important;margin:0 !important;' +
+        'backdrop-filter:none !important;-webkit-backdrop-filter:none !important}' +
+      // Sin gestión de color: evita que el navegador o el driver "aclaren"
+      // el negro o tramen grises, visible como manchado en una térmica.
+      '*{-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important;color-adjust:exact !important}' +
+      // CORRECCIÓN 4: .ticket recibe fondo y color explícitos DESPUÉS del
+      // reset universal para sobrescribir el transparent heredado.
+      '.ticket{background:#fff !important;background-color:#fff !important;' +
+        'color:#000 !important;' +
+        'font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;' +
+        'font-size:' + px(13) + ';line-height:1.35;width:100%;margin:0;padding:1mm 2mm 6mm 2mm;' +
+        '-webkit-font-smoothing:none;text-rendering:optimizeSpeed}' +
+      '.ticket hr{border:0 !important;border-top:1px dashed #000 !important;margin:3px 0}' +
+      '.ticket .c{text-align:center}' +
+      '.ticket .b{font-weight:700}' +
+      '.ticket .lg{font-size:' + px(14) + ';letter-spacing:.08em}' +
+      '.ticket table{width:100%;font-size:inherit;border-collapse:collapse;' +
+        'background:#fff !important;background-color:#fff !important}' +
+      '.ticket td{padding:0;border:0 !important;color:#000 !important;line-height:1.35;' +
+        'background:transparent !important}' +
+      '.ticket .r{text-align:right}' +
+      '.ticket .tk-titulo{font-size:' + px(15) + ';letter-spacing:.08em;color:#000 !important}' +
+      '.ticket .tk-mesa{font-size:' + px(22) + ';margin:3px 0;color:#000 !important}' +
+      '.ticket .tk-sub{font-size:' + px(11) + ';color:#000 !important}' +
+      '.ticket .tk-item{margin-bottom:6px;break-inside:avoid;page-break-inside:avoid}' +
+      '.ticket .tk-item-nm{font-size:' + px(14) + ';color:#000 !important}' +
+      // Precio: centrado, doble del tamaño base, negrita fuerte — destacado visualmente
+      '.ticket .tk-item-p{font-size:' + px(26) + ';font-weight:800;color:#000 !important;' +
+        'text-align:right !important;display:block !important;margin:4px 0 2px;' +
+        'letter-spacing:-.01em;line-height:1.1}' +
+      '.ticket .tk-item-carne{font-size:' + px(13) + ';font-weight:700;color:#000 !important}' +
+      '.ticket .tk-item-nota{font-size:' + px(12) + ';font-weight:700;color:#000 !important}' +
+      '.ticket .tk-item-ad{font-size:' + px(12) + ';font-weight:700;color:#000 !important}' +
+      '.ticket .tk-item-porc{font-size:' + px(11) + ';color:#000 !important}' +
+      '.ticket .tk-llevar{font-size:' + px(16) + ';letter-spacing:.1em;' +
+        'border:2px solid #000 !important;padding:2px 0;margin:3px 0;' +
+        'color:#000 !important;background:#fff !important}' +
+      // Evita que una fila o un item queden partidos entre "páginas" virtuales.
+      'tr,.tk-item,.c{break-inside:avoid;page-break-inside:avoid;orphans:2;widows:2}' +
+      // CORRECCIÓN 5: image-rendering corregido para WebKit en iOS/iPadOS.
+      // "crisp-edges" no está soportado en Safari/WebKit; el valor correcto
+      // es "-webkit-optimize-contrast" (que sí procesa el motor de Apple)
+      // combinado con "pixelated" para los demás navegadores.
+      // Esto elimina el dithering de grises alrededor del logo JPEG en la térmica.
+      '.ticket img{image-rendering:-webkit-optimize-contrast;image-rendering:pixelated;' +
+        'max-width:100%;height:auto}'
+    );
+  },
+
+  /** CSS para lo que va en hoja (los reportes), no en rollo térmico.
+      Mismo principio que el ticket: sin fondos, texto negro, y la cabecera de
+      la tabla repetida en cada página para que una tabla larga se entienda. */
+  hojaCSS(){
+    return (
+      '@page{size:auto;margin:0}' +
+      '*,*::before,*::after{box-sizing:border-box;background:none !important;' +
+        'background-image:none !important;background-color:transparent !important;' +
+        'box-shadow:none !important;text-shadow:none !important;color:#000 !important}' +
+      'html,body{margin:0;padding:0;background:#fff !important;' +
+        'font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}' +
+      '#pdfdoc{padding:8mm 7mm !important;border-radius:0 !important;font-size:9.5pt;line-height:1.2}' +
+      '#pdfdoc h2{font-size:13pt;margin:0 0 1pt;line-height:1.15}' +
+      '#pdfdoc h3{font-size:10.5pt;margin:5pt 0 1pt;line-height:1.15}' +
+      '#pdfdoc table{width:100%;border-collapse:collapse;font-size:8pt;margin-top:3pt}' +
+      '#pdfdoc th{padding:2.5pt 3pt;line-height:1.15;border-bottom:1pt solid #000;text-align:left}' +
+      '#pdfdoc td{padding:1.8pt 3pt;line-height:1.2;border-bottom:.4pt solid #999}' +
+      '#pdfdoc tfoot td{padding:3pt;border-top:1pt solid #000;border-bottom:0;font-weight:700}' +
+      '#pdfdoc thead{display:table-header-group}' +
+      '#pdfdoc tfoot{display:table-footer-group}' +
+      '#pdfdoc tr{page-break-inside:avoid}'
+    );
+  },
+
+  imprimir(ov, onDone){
     if (!ov || !ov.isConnected){
       UI.toast('No hay ningún documento abierto para imprimir.','warn');
       return false;
     }
-    // Tamaño de página del rollo. Sin esto el navegador supone una hoja carta
-    // y la comanda sale diminuta en una esquina. Solo se aplica a los
-    // documentos térmicos, que son los que pasan un ancho.
-    const mm = {'58':'58mm','80':'80mm'}[String(ancho||'')] || '';
-    let hoja = null;
-    if (mm){
-      hoja = document.createElement('style');
-      hoja.textContent = '@page{size:' + mm + ' auto;margin:0}';
-      document.head.appendChild(hoja);
+    // Un ticket va en rollo; un reporte, en hoja. Antes solo se contemplaba el
+    // ticket, así que los reportes no llegaban a imprimirse nunca.
+    const hoja = ov.querySelector('#pdfdoc');
+    const contenido = ov.querySelector('.ticket') ||
+                      (ov.querySelector('.ticket-frame') && ov.querySelector('.ticket-frame .ticket')) ||
+                      ov.querySelector('.ticket-frame') || hoja;
+    if (!contenido){
+      UI.toast('No hay ningún documento abierto para imprimir.','warn');
+      return false;
     }
-    ov.classList.add('print-doc');
-    document.body.classList.add('imprimiendo');
-    let hecho = false;
-    const limpiar = () => {
-      if (hecho) return;
-      hecho = true;
-      ov.classList.remove('print-doc');
-      document.body.classList.remove('imprimiendo');
-      if (hoja) hoja.remove();
-      window.removeEventListener('afterprint', limpiar);
+
+    const anchoMm = (DB.d.config.ticket === '58') ? '58' : '80';
+    const css = (contenido === hoja) ? UI.hojaCSS() : UI.ticketCSS(anchoMm, UI.esTablet());
+    const htmlDoc = (
+      '<!DOCTYPE html><html><head>' +
+      '<meta charset="utf-8">' +
+      '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+      '<title>Imprimir</title>' +
+      '<style>' + css + '</style>' +
+      '</head><body>' + contenido.outerHTML + '</body></html>'
+    );
+
+    /* ── CAUSA RAÍZ DEFINITIVA DEL FONDO NEGRO EN TABLETS ────────────────
+       Tanto Safari en iOS/iPadOS como Chrome en Android presentan el mismo
+       comportamiento: cuando se llama print() sobre un iframe con
+       width:0 / height:0 / visibility:hidden, el diálogo de impresión del
+       sistema operativo NO captura el contenido del iframe sino que hace un
+       screenshot de la pantalla VISIBLE de la app.
+
+       Lo que se ve en pantalla en ese momento es el overlay modal (.ov) con
+       background:rgba(4,4,4,.72) — prácticamente negro — que es exactamente
+       el recuadro oscuro que aparece impreso en el papel, con el logo
+       visible en el único cuadro blanco (el div .modal dentro del overlay).
+
+       SOLUCIÓN: Para cualquier dispositivo táctil (tablet o teléfono),
+       se abre una ventana nueva con window.open() que contiene ÚNICAMENTE
+       el HTML del ticket. Así el sistema operativo captura esa ventana
+       blanca (solo el ticket) y no la pantalla oscura de la app.
+
+       La ventana se abre dentro del handler onclick del botón, en el mismo
+       tick del evento de usuario, por lo que los bloqueadores de popups de
+       Safari y Chrome no la interceptan.
+
+       En equipos de escritorio (mouse disponible, hover funcional) se sigue
+       usando el iframe oculto, que es más limpio y no interrumpe el flujo. */
+
+    if (UI.esTablet() || UI.esIOS()){
+      /* Intentar window.open primero */
+      const ventana = window.open('', '_blank', 'width=420,height=700,scrollbars=yes');
+      if (!ventana){
+        /* El bloqueador de popups actuó: caer al iframe como respaldo */
+        return UI._imprimirIframe(htmlDoc, contenido, onDone);
+      }
+      ventana.document.write(htmlDoc);
+      ventana.document.close();
+      const imgs = ventana.document.images
+        ? Array.prototype.slice.call(ventana.document.images) : [];
+      const pendientes = imgs.filter(im => !im.complete);
+      const lanzar = () => {
+        try{
+          ventana.focus();
+          ventana.print();
+          /* Cerrar la ventana auxiliar tras un tiempo prudencial.
+             En iOS/iPadOS el close() inmediato después de print() cancela
+             el diálogo, por eso se espera. */
+          setTimeout(() => { try{ ventana.close(); }catch(e){} }, 3500);
+          /* Ejecutar el callback (cerrar modal + navegar) en cuanto
+             el diálogo de impresión está visible — el usuario ya vio
+             la comanda y puede continuar con el siguiente pedido. */
+          if (onDone) setTimeout(onDone, 400);
+        }catch(e){
+          try{ ventana.close(); }catch(ex){}
+          UI._imprimirIframe(htmlDoc, contenido, onDone);
+        }
+      };
+      if (pendientes.length){
+        let restantes = pendientes.length;
+        pendientes.forEach(im => { im.onload = im.onerror = () => { if(--restantes<=0) lanzar(); }; });
+        setTimeout(lanzar, 1400);
+      } else {
+        setTimeout(lanzar, 120);
+      }
+      return true;
+    }
+
+    /* ── Escritorio: iframe oculto ────────────────────────────────────────
+       En computadores con mouse el iframe oculto es invisible para el
+       diálogo de impresión del SO, que captura el iframe y no la pantalla.
+       Solo llega aquí si esTablet() y esIOS() son ambos false. */
+    return UI._imprimirIframe(htmlDoc, contenido, onDone);
+  },
+
+  /** Imprime usando un iframe oculto (funciona en Chrome, Firefox, Edge,
+      Chrome para Android). No usar en Safari iOS/iPadOS. */
+  _imprimirIframe(htmlDoc, contenido, onDone){
+    // Método de último recurso: imprime la página completa con CSS de impresión.
+    // Solo se activa si el iframe falla con excepción (navegador muy restrictivo).
+    const metodoAnterior = (ov) => {
+      if (!ov) return false;
+      document.body.classList.add('imprimiendo');
+      ov.classList.add('print-doc');
+      let hecho = false;
+      const limpiar = () => {
+        if (hecho) return; hecho = true;
+        ov.classList.remove('print-doc');
+        document.body.classList.remove('imprimiendo');
+        window.removeEventListener('afterprint', limpiar);
+        if (onDone) onDone();
+      };
+      window.addEventListener('afterprint', limpiar);
+      setTimeout(limpiar, 5000);
+      try{ window.print(); }catch(e){ limpiar(); return false; }
+      return true;
     };
-    window.addEventListener('afterprint', limpiar);
-    setTimeout(limpiar, 5000);
-    try{ window.print(); }catch(e){ limpiar(); return false; }
+
+    let frame = document.getElementById('print-frame');
+    if (!frame){
+      frame = document.createElement('iframe');
+      frame.id = 'print-frame';
+      frame.setAttribute('aria-hidden', 'true');
+      frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
+      document.body.appendChild(frame);
+    }
+
+    let doc;
+    try{
+      doc = frame.contentWindow.document;
+      doc.open();
+      doc.write(htmlDoc);
+      doc.close();
+    }catch(e){
+      // El iframe no pudo escribirse: usar la página completa como respaldo
+      const ovEl = contenido && contenido.closest ? contenido.closest('.ov') : null;
+      return metodoAnterior(ovEl);
+    }
+
+    const lanzar = () => {
+      try{
+        frame.contentWindow.focus();
+        frame.contentWindow.print();
+        /* En escritorio, afterprint es fiable; ejecutar callback al terminar */
+        const afterFn = () => {
+          frame.contentWindow.removeEventListener('afterprint', afterFn);
+          if (onDone) onDone();
+        };
+        frame.contentWindow.addEventListener('afterprint', afterFn);
+        setTimeout(afterFn, 8000); /* seguro por si afterprint no dispara */
+      }catch(e){
+        const ovEl = contenido && contenido.closest ? contenido.closest('.ov') : null;
+        metodoAnterior(ovEl);
+      }
+    };
+    const imgs = doc.images ? Array.prototype.slice.call(doc.images) : [];
+    const pendientes = imgs.filter(im => !im.complete);
+    if (pendientes.length){
+      let restantes = pendientes.length;
+      pendientes.forEach(im => { im.onload = im.onerror = () => { if(--restantes<=0) lanzar(); }; });
+      setTimeout(lanzar, 1200);
+    } else {
+      setTimeout(lanzar, 50);
+    }
     return true;
   },
 
@@ -2728,6 +3090,9 @@ const UI = {
         };
         ov.querySelector('[data-save]').onclick = submit;
         form.addEventListener('submit', e => { e.preventDefault(); submit(); });
+        /* Llamar al onMount del llamador si lo tiene, para que pueda
+           enlazar handlers propios con el DOM ya en el árbol. */
+        if (o.onMount) o.onMount(ov, close);
       }
     });
     return close;
@@ -2902,6 +3267,7 @@ const NAV = [
   {id:'orders',  t:'Comandas',     ico:'table',perm:'comandas'},
   {id:'kds',     t:'Cocina',       ico:'fire', perm:'kds'},
   {id:'cash',    t:'Caja',         ico:'cash', perm:'cash'},
+  {id:'domicilios', t:'Domicilios', ico:'moto', perm:'pos'},
   {sect:'Catálogo e insumos'},
   {id:'menu',    t:'Carta',        ico:'menu', perm:'menu'},
   {id:'inv',     t:'Inventario',   ico:'meat', perm:'inv:read'},
@@ -2914,7 +3280,7 @@ const NAV = [
   {id:'reports', t:'Reportes',     ico:'rep',  perm:'reports'},
   {id:'sync',    t:'Sincronización',ico:'sync', perm:'sync'},
   {id:'audit',   t:'Auditoría',    ico:'shield',perm:'audit'},
-  {id:'gastos',  t:'Gastos',       ico:'cash',  perm:'admin'},
+  {id:'gastos',  t:'Gastos',       ico:'cash',  perm:'gastos'},
   {id:'cfg',     t:'Configuración',ico:'cfg',  perm:'cfg'}
 ];
 const TABS = [
@@ -3018,12 +3384,11 @@ const Router = {
     clearInterval(this._timer); this._timer = null;
 
     /* ── Guardar foco y cursor del input activo antes de destruir el DOM ── */
-    let focusId = null, focusSel = null, focusCursor = null;
+    let focusId = null, focusSel = 0, focusCursor = 0;
     const ae = document.activeElement;
-    if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA') && main.contains(ae)){
-      focusId = ae.id || null;
-      focusSel = ae.selectionStart;
-      focusCursor = ae.selectionEnd;
+    if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA') && ae.id && main.contains(ae)){
+      focusId = ae.id;
+      try{ focusSel = ae.selectionStart || 0; focusCursor = ae.selectionEnd || 0; }catch(e){ focusSel = focusCursor = (ae.value||'').length; }
     }
 
     main.innerHTML = v.html();
@@ -3476,7 +3841,7 @@ const POS = {
       (i.carne === undefined || i.carne === insumo));
     if (ex) ex.qty++;
     else this.cart.push({lid:Util.uid('l'), pid, nombre:p.nombre, precio,
-      gramos:cantidad, qty:1, nota, carne:insumo || null,
+      gramos:cantidad, qty:1, nota, adiciones: [], carne:insumo || null,
       carneNombre: insumo ? DB.rotulo(DB.meat(insumo)) : ''});
     this.paint();
     this.mostrarCarrito();
@@ -3522,10 +3887,11 @@ const POS = {
     if (!carnes.length) return UI.toast('No hay carnes en el inventario para armar la bandeja.','warn', 4600);
     let sel = linea ? linea.carne : null;
     const nota = linea ? linea.nota : '';
-    const sugeridas = ['Frijol','Espagueti','Huevo','Sin ensalada','Doble arroz','Sin papa','Arroz aparte','Sin plátano','Con aguacate'];
-    const coccion = ['Término medio','Tres cuartos','Bien asado','Poco asado','Sin sal','Sin picante','Extra limón','Aparte','Para llevar'];
+    const sugeridas = ['Frijol','Espagueti','Huevo','Sin Ensalada','Doble Arroz','Solo Maduro','Solo Papas'];
+    const coccion = ['Término Azul','Término Medio','Tres Cuartos','Bien Asado','Sin Sal','Sin Picante'];
     const ensaladas = ['Ensalada de cebolla y tomate','Ensalada de remolacha','Ensalada agridulce','Ensalada de repollo','Ensalada de lechuga'];
     const jugos = ['Tomate','Guayaba','Tropical','Piña','Curuba','Guarapo','Claro','Mazamorra','Mango','Banano'];
+    const sopas = ['Sopa del día','Menudencia','Pescado'];
 
     const close = UI.modal({
       title:(linea ? 'Editar ' : '') + p.nombre, size:'lg',
@@ -3545,6 +3911,9 @@ const POS = {
         '<div class="eyebrow" style="margin:16px 0 7px">Paso 2 · indicaciones para cocina</div>' +
         '<textarea class="inp" id="bNota" rows="2" ' +
           'placeholder="Escribe la indicación o selecciona las opciones rápidas">' + Util.esc(nota) + '</textarea>' +
+        '<div style="margin-top:8px"><span class="dim" style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase">Sopa</span>' +
+        '<div class="chips wrap" style="margin-top:4px">' +
+          sopas.map(x => '<button class="chip" data-s="Sopa: ' + Util.esc(x) + '">' + x + '</button>').join('') + '</div></div>' +
         '<div style="margin-top:8px"><span class="dim" style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase">Término de cocción</span>' +
         '<div class="chips wrap" style="margin-top:4px">' +
           coccion.map(x => '<button class="chip" data-s="' + Util.esc(x) + '">' + x + '</button>').join('') + '</div></div>' +
@@ -3561,7 +3930,9 @@ const POS = {
           'Solo la carne descuenta del inventario.</p>' +
         '<div class="bandeja-total" id="bTotal"></div>',
       footer:'<button class="btn" data-close>Cancelar</button>' +
-             '<button class="btn pri" id="bOk">' + (linea ? 'Guardar' : 'Agregar al pedido') + '</button>',
+             '<button class="btn pri" id="bOk">' + (linea ? 'Guardar' : 'Agregar al pedido') + '</button>' +
+             (Auth.can('comandas') ? '<button class="btn gold" id="bEnviar" ' +
+               'title="Agrega y manda la comanda a cocina">' + Util.ico('fire') + ' Y enviar a cocina</button>' : ''),
       onMount(ov){
         const total = ov.querySelector('#bTotal');
         const marca = () => {
@@ -3573,24 +3944,45 @@ const POS = {
             : '<span class="dim">Elige la carne para ver el precio</span>';
         };
         ov.querySelectorAll('[data-c]').forEach(b => b.onclick = () => { sel = b.dataset.c; marca(); });
-        ov.querySelectorAll('[data-s]').forEach(b => b.onclick = () => {
+        ov.querySelectorAll('[data-s]').forEach(b => b.onclick = async () => {
           const ta = ov.querySelector('#bNota');
-          ta.value = (ta.value ? ta.value + ', ' : '') + b.dataset.s;
+          const val = b.dataset.s;
+          const actual = ta.value || '';
+          const yaEsta = actual.split(',').map(s=>s.trim()).some(s => s.toLowerCase() === val.toLowerCase());
+          if (yaEsta){
+            const ok = await UI.confirm(
+              '«' + val + '» ya está en las indicaciones. ¿Deseas agregarlo de nuevo?',
+              {ok:'Sí, agregar otra vez', title:'Indicación duplicada'});
+            if (!ok) return;
+          }
+          ta.value = (actual ? actual + ', ' : '') + val;
+          requestAnimationFrame(() => {
+            ta.focus();
+            const len = ta.value.length;
+            ta.setSelectionRange(len, len);
+            ta.scrollTop = ta.scrollHeight;
+          });
         });
         marca();
-        ov.querySelector('#bOk').onclick = () => {
+        const confirmar = (enviar) => {
           if (!sel) return UI.toast('Elige la carne de la bandeja.','warn');
           const texto = (ov.querySelector('#bNota').value||'').trim();
+          // El modal se cierra primero: al enviar a cocina se abre el de la
+          // comanda, y no deben quedar dos ventanas encima.
+          close();
           if (linea){
             const m = DB.meat(sel);
             linea.carne = sel; linea.carneNombre = DB.rotulo(m); linea.nota = texto;
             linea.precio = POS.precioBandeja(p, sel);   // el precio sigue a la carne
-            close(); POS.paint();
+            POS.paint();
           } else {
-            close();
             POS.add(p.id, {carne:sel, nota:texto});
           }
+          if (enviar) setTimeout(() => POS.sendKitchen(), 0);
         };
+        ov.querySelector('#bOk').onclick = () => confirmar(false);
+        const env = ov.querySelector('#bEnviar');
+        if (env) env.onclick = () => confirmar(true);
       }
     });
   },
@@ -3615,73 +4007,280 @@ const POS = {
   },
   note(lid){
     const it = this.cart.find(i=>i.lid===lid); if(!it) return;
-    const chipsCoccion = ['Término medio','Tres cuartos','Bien asado','Poco asado','Sin sal','Sin picante','Aparte','Para llevar'];
-    const chipsAcomp = ['Frijol','Espagueti','Huevo','Sin ensalada','Doble arroz'];
+    const chipsCoccion = ['Término Azul','Término Medio','Tres Cuartos','Bien Asado','Sin Sal','Sin Picante'];
+    const chipsAcomp = ['Frijol','Espagueti','Huevo','Sin Ensalada','Doble Arroz','Solo Maduro','Solo Papas'];
     const chipsEnsalada = ['Ensalada de cebolla y tomate','Ensalada de remolacha','Ensalada agridulce','Ensalada de repollo','Ensalada de lechuga'];
     const p = DB.product(it.pid);
-    const esBandejaOEco = p && (p.bandeja || /econ[oó]mi/i.test(p.nombre) || /econ[oó]mi/i.test((DB.cat(p.cat)||{}).nombre));
+    const esDesayuno = p && ((DB.cat(p.cat)||{}).id === 'c_des' || /desayuno/i.test((DB.cat(p.cat)||{}).nombre));
     const jugos = ['Tomate','Guayaba','Tropical','Piña','Curuba','Guarapo','Claro','Mazamorra','Mango','Banano'];
-    UI.formModal({
-      title:'Nota · ' + it.nombre, size:'sm',
-      fields:[{k:'nota', label:'Indicación para cocina', type:'textarea', val:it.nota, full:true,
-        ph:'Escribe la indicación o selecciona opciones rápidas'}],
-      extra:'<div style="margin-top:10px"><span class="dim" style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase">Cocción</span>' +
-        '<div class="chips wrap" style="margin-top:4px">' + chipsCoccion.map(c=>'<button class="chip" data-chip="'+Util.esc(c)+'">'+c+'</button>').join('') + '</div></div>' +
-        '<div style="margin-top:8px"><span class="dim" style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase">Acompañamientos</span>' +
-        '<div class="chips wrap" style="margin-top:4px">' + chipsAcomp.map(c=>'<button class="chip" data-chip="'+Util.esc(c)+'">'+c+'</button>').join('') + '</div></div>' +
-        '<div style="margin-top:8px"><span class="dim" style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase">Ensaladas</span>' +
-        '<div class="chips wrap" style="margin-top:4px">' + chipsEnsalada.map(c=>'<button class="chip" data-chip="'+Util.esc(c)+'">'+c+'</button>').join('') + '</div></div>' +
-        (esBandejaOEco ? '<div style="margin-top:8px"><span class="dim" style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase">Jugo incluido</span>' +
-          '<div class="chips wrap" style="margin-top:4px">' + jugos.map(c=>'<button class="chip" data-chip="Jugo de '+Util.esc(c)+'">'+c+'</button>').join('') + '</div></div>' : '') +
-        '<hr style="border-color:var(--line);margin:12px 0 8px">' +
-        '<div><span class="dim" style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase">Adiciones con precio</span>' +
-          '<div class="chips wrap" style="margin-top:6px">' +
-            '<button class="chip" data-adchip="Aguacate">🥑 Aguacate</button>' +
-            '<button class="chip" data-adchip="Papas Fritas">🍟 Papas Fritas</button>' +
-          '</div>' +
-          '<div class="row" style="gap:6px;margin-top:8px">' +
-            '<input class="inp" id="ad-nombre" placeholder="Nombre de la adición" style="flex:2">' +
-            '<input class="inp num" id="ad-precio" type="number" min="0" placeholder="Precio" style="flex:1">' +
-            '<button class="btn sm pri" id="ad-btn">Agregar</button>' +
-          '</div>' +
-          '<div id="adiciones-list" style="margin-top:6px;border:1px solid var(--line);border-radius:var(--r);overflow:hidden"></div>' +
-        '</div>',
-      onSave(d, close){ it.nota = d.nota; POS.paint(); close(); }
-    });
-    document.querySelectorAll('[data-chip]').forEach(b => b.onclick = () => {
-      const ta = document.querySelector('#mform [name=nota]');
-      ta.value = (ta.value ? ta.value + ', ' : '') + b.dataset.chip;
-    });
-    /* ── Adiciones con precio ── */
-    const adBox = document.getElementById('adiciones-list');
-    const paintAd = () => {
-      const ads = it.adiciones || [];
-      adBox.innerHTML = ads.length ? ads.map((a,idx) =>
-        '<div class="row" style="gap:6px;padding:5px 8px;border-bottom:1px solid var(--line)">' +
-          '<span style="flex:1;font-size:13px">' + Util.esc(a.nombre) + '</span>' +
-          '<b class="num" style="font-size:13px">+ ' + Util.money(a.precio) + '</b>' +
-          '<button class="btn sm ghost" data-addel="' + idx + '" style="color:var(--ash-dim);padding:2px 6px">✕</button>' +
-        '</div>').join('') : '<div class="dim" style="padding:8px;font-size:12px">Sin adiciones</div>';
-    };
-    paintAd();
-    document.querySelectorAll('[data-adchip]').forEach(b => b.onclick = () => {
-      document.getElementById('ad-nombre').value = b.dataset.adchip;
-      document.getElementById('ad-precio').focus();
-    });
-    document.getElementById('ad-btn').onclick = () => {
-      const nom = (document.getElementById('ad-nombre').value||'').trim();
-      const pre = Math.max(0, Number(document.getElementById('ad-precio').value)||0);
-      if (!nom) return UI.toast('Escribe el nombre de la adición.','warn');
-      if (!pre) return UI.toast('Indica el precio de la adición.','warn');
-      if (!it.adiciones) it.adiciones = [];
-      it.adiciones.push({nombre:nom, precio:pre});
-      document.getElementById('ad-nombre').value = '';
-      document.getElementById('ad-precio').value = '';
-      paintAd();
-    };
-    adBox.addEventListener('click', e => {
-      const del = e.target.closest('[data-addel]');
-      if (del && it.adiciones){ it.adiciones.splice(Number(del.dataset.addel), 1); paintAd(); }
+    const sopas = ['Sopa del día','Menudencia','Pescado'];
+    const excluirCarnes = ['tilapia','punta de anca','churrasco','trucha',
+      'picada para 2','picada para dos','picada para 4','picada para cuatro',
+      'sopa del dia','sopa del día','calentado',
+      'salchichas zenu','salchichas zenú','salchicha zenu','salchicha zenú',
+      'lonchitas','lonchita','arepa tela','ensalada','desayuno sencillo'];
+    const norm = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+    const carnesDesayuno = esDesayuno
+      ? DB.meats().filter(m => (m.tipo||'carne')==='carne' && !excluirCarnes.some(e=>norm(m.nombre).includes(norm(e)))).map(m=>m.nombre)
+      : [];
+
+    /* ── ARQUITECTURA DEFINITIVA: array temporal independiente ──────────
+       Se trabaja sobre una COPIA LOCAL de nota y adiciones.
+       it.nota e it.adiciones SOLO se actualizan al pulsar Guardar.
+       Esto elimina cualquier problema de mutación prematura, referencia
+       obsoleta o pérdida de datos por repintado del carrito. */
+    let notaTmp = it.nota || '';
+    let adicionesTmp = Array.isArray(it.adiciones) ? it.adiciones.slice() : [];
+
+    /* ── Constructor de grupos de chips ── */
+    const grpChips = (titulo, items) =>
+      '<div style="margin-top:10px">' +
+        '<span class="dim" style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase">' + titulo + '</span>' +
+        '<div class="chips wrap" style="margin-top:5px">' +
+          items.map(c => '<button type="button" class="chip" data-chip="' + Util.esc(c) + '">' + Util.esc(c) + '</button>').join('') +
+        '</div></div>';
+
+    /* Chips de adiciones por defecto del plato (con precio definido).
+       INTERVENCIÓN: ahora se muestran dentro de la misma cuadrícula amplia
+       de "Adiciones con cargo" (icono + nombre), no como chips de texto. */
+    const adDefHTML = (p && p.adicionesDefault && p.adicionesDefault.length)
+      ? p.adicionesDefault.map(a =>
+          '<button type="button" class="ad-chip" data-adchip="' + Util.esc(a.nombre) + '" data-adprecio="' + (Number(a.precio)||0) + '">' +
+          '<span class="ad-chip-ico">⊕</span><span>' + Util.esc(a.nombre) + '</span></button>').join('')
+      : '';
+
+    const bodyHTML =
+      '<label style="display:block;font-size:12px;color:var(--ash-dim);margin-bottom:5px">Indicación para cocina</label>' +
+      '<textarea id="nota-ta" class="inp" rows="3" style="width:100%;resize:vertical" ' +
+        'placeholder="Escribe la indicación o selecciona opciones rápidas">' + Util.esc(notaTmp) + '</textarea>' +
+      grpChips('Sopa', sopas) +
+      grpChips('Cocción', chipsCoccion) +
+      grpChips('Acompañamientos', chipsAcomp) +
+      grpChips('Ensaladas', chipsEnsalada) +
+      (esDesayuno && carnesDesayuno.length ? grpChips('Carne', carnesDesayuno.map(c=>'Carne: '+c)) : '') +
+      grpChips('Jugo incluido', jugos.map(c=>'Jugo de '+c)) +
+      (esDesayuno ? grpChips('Bebida incluida', ['Café con Leche','Chocolate con Leche','Chocolate sin Leche','Tinto'].map(c=>'Bebida: '+c)) : '') +
+      '<hr style="border-color:var(--line);margin:12px 0 8px">' +
+      '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">' +
+        '<span style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--brass)">⊕ Adiciones con cargo — toca para agregar</span>' +
+      '</div>' +
+      /* INTERVENCIÓN: espacio amplio en cuadrícula (ver .ad-grid en <style>)
+         para ver de un vistazo todas las adiciones disponibles. Cada botón
+         solo lleva el icono y el nombre; la lógica de selección
+         (data-adchip / data-adprecio) queda exactamente igual. */
+      '<div class="ad-grid">' +
+        adDefHTML +
+        '<button type="button" class="ad-chip" data-adchip="Aguacate"><span class="ad-chip-ico">🥑</span><span>Aguacate</span></button>' +
+        '<button type="button" class="ad-chip" data-adchip="Papas Fritas"><span class="ad-chip-ico">🍟</span><span>Papas Fritas</span></button>' +
+        '<button type="button" class="ad-chip" data-adchip="Tajadas Maduro"><span class="ad-chip-ico">🍌</span><span>Tajadas Maduro</span></button>' +
+        '<button type="button" class="ad-chip" data-adchip="Patacón"><span class="ad-chip-ico">🫓</span><span>Patacón</span></button>' +
+        '<button type="button" class="ad-chip" data-adchip="Sopa"><span class="ad-chip-ico">🍲</span><span>Sopa</span></button>' +
+        '<button type="button" class="ad-chip" data-adchip="Jugo"><span class="ad-chip-ico">🧃</span><span>Jugo</span></button>' +
+        '<button type="button" class="ad-chip" data-adchip="Huevo"><span class="ad-chip-ico">🍳</span><span>Huevo</span></button>' +
+      '</div>' +
+      '<div class="row" style="gap:6px;margin-top:8px">' +
+        '<input class="inp" id="ad-nombre" placeholder="Nombre de la adición" style="flex:2">' +
+        '<input class="inp num" id="ad-precio" type="number" min="0" step="500" placeholder="Precio ($0 = sin cargo)" style="flex:1">' +
+        '<button type="button" id="ad-btn" style="' +
+          'display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:8px;' +
+          'background:linear-gradient(180deg,#3EB86A 0%,#2E9A55 60%,#22753E 100%);' +
+          'color:#fff;font-weight:700;font-size:13px;border:none;cursor:pointer;white-space:nowrap;' +
+          'box-shadow:0 3px 0 #1A5C2E,0 4px 10px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.18);' +
+          'text-shadow:0 1px 1px rgba(0,0,0,.35);transition:.12s;' +
+          '" onmousedown="this.style.transform=\'translateY(2px)\';this.style.boxShadow=\'0 1px 0 #1A5C2E,0 2px 6px rgba(0,0,0,.25),inset 0 1px 0 rgba(255,255,255,.1)\'"' +
+          ' onmouseup="this.style.transform=\'\';this.style.boxShadow=\'0 3px 0 #1A5C2E,0 4px 10px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.18)\'"' +
+          ' onmouseleave="this.style.transform=\'\';this.style.boxShadow=\'0 3px 0 #1A5C2E,0 4px 10px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.18)\'">' +
+          '＋ Agregar Adición' +
+        '</button>' +
+      '</div>' +
+      '<div id="adiciones-list" style="margin-top:6px;border:1px solid var(--line);border-radius:var(--r);overflow:hidden"></div>';
+
+    const close = UI.modal({
+      title: 'Nota · ' + it.nombre, size:'sm',
+      body: bodyHTML,
+      footer: '<button type="button" class="btn" data-close>Cancelar</button>' +
+              (POS.cart.length && Auth.can('comandas')
+                ? '<button type="button" class="btn pri" id="nota-enviar" title="Guarda y manda la comanda a cocina">' +
+                  Util.ico('fire') + ' Guardar y enviar a cocina</button>'
+                : ''),
+      onMount(ov, cerrar){
+        const ta = ov.querySelector('#nota-ta');
+        const adBox = ov.querySelector('#adiciones-list');
+
+        /* ── Render de la lista de adiciones temporales ── */
+        const paintAd = () => {
+          adBox.innerHTML = adicionesTmp.length
+            ? adicionesTmp.map((a, i) =>
+                '<div class="row" style="gap:6px;padding:6px 8px;border-bottom:1px solid var(--line);align-items:center">' +
+                  '<span style="flex:1;font-size:13px;font-weight:600">' + Util.esc(a.nombre) + '</span>' +
+                  '<b class="num" style="font-size:13px;white-space:nowrap;color:var(--brass)">' +
+                    (a.precio > 0 ? '+ ' + Util.money(a.precio) : '<span class="dim">sin cargo</span>') +
+                  '</b>' +
+                  '<button type="button" class="btn sm ghost" data-addel="' + i + '" ' +
+                    'style="color:var(--ash-dim);padding:2px 6px;flex:none" title="Quitar">✕</button>' +
+                '</div>').join('')
+            : '<div class="dim" style="padding:10px 8px;font-size:12px;text-align:center">Sin adiciones — toca un chip para agregar</div>';
+        };
+        /* paintAd() inicial se llama después de definir actualizarChips (más abajo) */
+
+        /* ── Función interna: agregar adición al array temporal ──
+           Precio 0 es válido (indica sin cargo adicional).
+           Solo bloquea si el nombre está vacío. */
+        /* Actualiza el estado visual "on" de los chips según adicionesTmp.
+           Un chip queda marcado (on) si ya fue agregado a la lista de adiciones. */
+        const actualizarChips = () => {
+          ov.querySelectorAll('[data-adchip]').forEach(b => {
+            const nom = b.dataset.adchip;
+            const yaEsta = adicionesTmp.some(a => a.nombre.toLowerCase() === nom.toLowerCase());
+            b.classList.toggle('on', yaEsta);
+            b.style.opacity = yaEsta ? '0.55' : '';
+            b.title = yaEsta ? nom + ' ya agregado' : '';
+          });
+        };
+
+        const agregarAdicion = (nom, pre) => {
+          nom = String(nom||'').trim();
+          if (!nom) return;
+          pre = Math.max(0, Number(pre)||0);
+          /* Si ya existe: quitarlo (toggle) en lugar de mostrar error */
+          const idx = adicionesTmp.findIndex(a => a.nombre.toLowerCase() === nom.toLowerCase());
+          if (idx >= 0){
+            adicionesTmp.splice(idx, 1);
+            paintAd();
+            actualizarChips();
+            return;
+          }
+          adicionesTmp.push({nombre:nom, precio:pre});
+          paintAd();
+          actualizarChips();
+        };
+
+        /* ── Chips de indicaciones de cocina (texto libre en textarea) ── */
+        ov.querySelectorAll('[data-chip]').forEach(b => b.addEventListener('click', async () => {
+          const val = b.dataset.chip;
+          const actual = ta.value || '';
+          const yaEsta = actual.split(',').map(s=>s.trim()).some(s=>s.toLowerCase()===val.toLowerCase());
+          if (yaEsta){
+            const ok = await UI.confirm(
+              '«' + val + '» ya está en las indicaciones. ¿Deseas agregarlo de nuevo?',
+              {ok:'Sí, agregar otra vez', title:'Indicación duplicada'});
+            if (!ok) return;
+          }
+          ta.value = (actual ? actual + ', ' : '') + val;
+          ta.scrollTop = ta.scrollHeight;
+        }));
+
+        /* ── Chips de adiciones rápidas ──
+           Al tocar un chip: pre-rellena el nombre en el campo de texto
+           y mueve el foco al campo de precio para que el usuario lo ingrese
+           manualmente. El botón verde "Agregar Adición" confirma la acción.
+           INTERVENCIÓN: se usa la clase propia "ad-sel" (resaltado dorado,
+           bien visible) para marcar el chip que se está seleccionando, sin
+           tocar la clase "on" que actualizarChips() usa para las adiciones
+           ya agregadas — así ambas señales visuales conviven sin pisarse. */
+        ov.querySelectorAll('[data-adchip]').forEach(b => b.addEventListener('click', () => {
+          const nom = b.dataset.adchip;
+          const inpNom = ov.querySelector('#ad-nombre');
+          const inpPre = ov.querySelector('#ad-precio');
+          /* Pre-rellenar nombre y limpiar precio para que el usuario lo ingrese */
+          inpNom.value = nom;
+          inpPre.value = '';
+          inpPre.focus();
+          /* Marcar chip visualmente como seleccionado (nombre ya en el campo) */
+          ov.querySelectorAll('[data-adchip]').forEach(c => c.classList.remove('ad-sel'));
+          b.classList.add('ad-sel');
+        }));
+
+        /* ── Botón Agregar Adición (verde) ── */
+        ov.querySelector('#ad-btn').addEventListener('click', () => {
+          const nom = (ov.querySelector('#ad-nombre').value||'').trim();
+          const pre = Math.max(0, Number(ov.querySelector('#ad-precio').value)||0);
+          if (!nom) return UI.toast('Escribe el nombre de la adición.','warn');
+          agregarAdicion(nom, pre);  /* ya llama paintAd + actualizarChips */
+          ov.querySelector('#ad-nombre').value = '';
+          ov.querySelector('#ad-precio').value = '';
+          /* Limpiar resaltado de selección rápida al agregar (ya quedó
+             reflejado por actualizarChips con la clase "on" si corresponde) */
+          ov.querySelectorAll('[data-adchip]').forEach(c => c.classList.remove('ad-sel'));
+        });
+
+        /* ── Eliminar adición de la lista temporal ── */
+        adBox.addEventListener('click', e => {
+          const del = e.target.closest('[data-addel]');
+          if (!del) return;
+          adicionesTmp.splice(Number(del.dataset.addel), 1);
+          paintAd();
+          actualizarChips();
+        });
+
+        /* ── Pintar estado inicial: lista de adiciones ya guardadas + chips activos ── */
+        paintAd();
+        actualizarChips();
+
+        /* ── GUARDAR: corrección definitiva de causa raíz ────────────────
+           1. Flag _guardado evita doble ejecución sin usar {once:true}.
+           2. Se asignan los datos AL OBJETO del carrito PRIMERO.
+           3. Luego se cierra el modal (ov.remove()).
+           4. Finalmente se repinta el carrito y se persiste la sesión.
+           Esto garantiza que POS.cart ya tiene los datos correctos cuando
+           paintCart() reconstruye el DOM, y que el modal ya no existe
+           cuando Sesion.guardar() dispara su setTimeout de 400 ms. ── */
+        let _guardado = false;
+        const ejecutarGuardar = (enviar) => {
+          if (_guardado) return;          // idempotente: un solo disparo
+          _guardado = true;
+
+          /* 1. Capturar valores desde el DOM del modal (aún vivo) */
+          const notaFinal    = (ta.value || '').trim();
+          const adicionesFinal = adicionesTmp.slice();  // copia profunda
+
+          /* 2. Escribir en el objeto del carrito (referencia directa) */
+          it.nota      = notaFinal;
+          it.adiciones = adicionesFinal;
+
+          /* 3. Cerrar el modal ANTES de repintar — usa 'cerrar' (parámetro de onMount),
+                 NO 'close' (variable externa aún undefined cuando onMount ejecuta) */
+          cerrar();
+
+          /* 4. Repintar carrito con los datos ya escritos en POS.cart */
+          POS.paintCart();
+          // En pantallas pequeñas el carrito es una hoja: si queda cerrada, el
+          // botón de enviar a cocina no se ve y parece que no pasó nada.
+          if (!enviar && window.innerWidth <= 860){
+            const cajon = document.getElementById('cart');
+            if (cajon && !cajon.classList.contains('open')) cajon.classList.add('open');
+          }
+
+          /* 5. Persistir en sesión */
+          Sesion.guardar();
+
+          /* 6. Toast descriptivo de confirmación */
+          const totalAd = adicionesFinal.reduce((s,a) => s + a.precio, 0);
+          const partes  = adicionesFinal.map(a =>
+            a.nombre + (a.precio > 0 ? ' +$' + Util.money(a.precio, false) : '')
+          );
+          const resumen = partes.length ? ': ' + partes.join(', ') : '';
+          UI.toast('✓ Guardado' + resumen + (totalAd > 0 ? ' · Total adiciones: +$' + Util.money(totalAd, false) : ''),
+            'ok', enviar ? 1400 : 2600);
+
+          /* 7. Resalte inmediato de la línea, sin esperas */
+          const el = document.querySelector('[data-linea="' + it.lid + '"]');
+          if (el) {
+            el.style.transition = 'background .2s';
+            el.style.background = 'rgba(62,155,98,.22)';
+            setTimeout(() => { el.style.background = ''; }, 1400);
+          }
+
+          /* 8. Si se pidió, la comanda sale a cocina con esto ya incorporado.
+                Se encadena en el siguiente ciclo para que el modal de la nota
+                haya desaparecido antes de que se abra el de la comanda. */
+          if (enviar) setTimeout(() => POS.sendKitchen(), 0);
+        };
+
+        const btnSave = ov.querySelector('#nota-save'); if (btnSave) btnSave.addEventListener('click', () => ejecutarGuardar(false));
+        const directo = ov.querySelector('#nota-enviar');
+        if (directo) directo.addEventListener('click', () => ejecutarGuardar(true));
+      }
     });
   },
   products(){
@@ -3734,7 +4333,7 @@ const POS = {
   },
   mount(){
     const q = document.getElementById('pq');
-    q.oninput = Util.debounce(e => { POS.q = e.target.value; POS.paintGrid(); }, 110);
+    q.oninput = Util.debounce(() => { POS.q = q.value; POS.paintGrid(); }, 110);
     document.querySelectorAll('[data-cat]').forEach(b => b.onclick = () => {
       POS.cat = b.dataset.cat;
       document.querySelectorAll('[data-cat]').forEach(x => x.classList.toggle('on', x === b));
@@ -3829,7 +4428,16 @@ const POS = {
           (i.gramos ? ' · ' + Util.cantIns(i.gramos*i.qty,
             DB.meat(i.carne !== undefined ? i.carne : (DB.product(i.pid)||{}).carne)) : '') + '</div>' +
         (i.nota ? '<div class="ci-note">' + Util.esc(i.nota) + '</div>' : '') +
-        ((i.adiciones&&i.adiciones.length) ? '<div class="ci-note" style="color:var(--ember-hi)">+ ' + i.adiciones.map(a=>a.nombre + ' ' + Util.money(a.precio)).join(', ') + '</div>' : '') +
+        ((i.adiciones&&i.adiciones.length) ?
+          '<div style="margin-top:3px">' +
+            i.adiciones.map(a =>
+              '<div class="ci-note" style="color:var(--ember-hi);display:flex;justify-content:space-between;gap:4px">' +
+                '<span>⊕ ' + Util.esc(a.nombre) + '</span>' +
+                (a.precio>0 ? '<span style="font-family:var(--mono);font-size:11px;flex-shrink:0">+' + Util.money(a.precio) + '</span>' : '<span style="color:var(--ash-dim);font-size:11px">sin cargo</span>') +
+              '</div>'
+            ).join('') +
+          '</div>'
+          : '') +
         '<div class="row" style="gap:6px;margin-top:6px">' +
           ((DB.product(i.pid)||{}).bandeja
             ? '<button class="btn sm ghost ci-btn" data-band="' + i.lid + '">' + Util.ico('edit') + ' Cambiar carne</button>'
@@ -3860,6 +4468,22 @@ const POS = {
         (this.esLlevar()
           ? this.TIPOS[this.tipo].corto + (t.domicilio ? ' · ' + Util.money(t.domicilio) : ' · sin cargo')
           : 'Marcar para llevar o domicilio') + '</button>' +
+      /* INTERVENCIÓN: botón "Nuevo Pedido" — naranja, en alto relieve.
+         Va antes de "Enviar a cocina" y "Cobrar" (orden: Nuevo Pedido →
+         Enviar a Cocina → Cobrar). Abre la sección de platos (categoría
+         "Todo") para que la mesera pueda seguir escogiendo con facilidad,
+         útil cuando en una mesa hay varios clientes. */
+      '<button type="button" class="btn wide" id="btnNuevoPedido" style="' +
+        'padding:13px;margin-bottom:8px;display:flex;align-items:center;justify-content:center;gap:8px;' +
+        'background:linear-gradient(180deg,#FF9A3D 0%,#FB7B1E 55%,#E35F05 100%);' +
+        'color:#fff;font-weight:800;font-size:14px;border:none;border-radius:10px;cursor:pointer;' +
+        'box-shadow:0 4px 0 #B8460A,0 6px 14px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.25);' +
+        'text-shadow:0 1px 1px rgba(0,0,0,.35);transition:.12s" ' +
+        'onmousedown="this.style.transform=\'translateY(3px)\';this.style.boxShadow=\'0 1px 0 #B8460A,0 2px 6px rgba(0,0,0,.25),inset 0 1px 0 rgba(255,255,255,.15)\'" ' +
+        'onmouseup="this.style.transform=\'\';this.style.boxShadow=\'0 4px 0 #B8460A,0 6px 14px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.25)\'" ' +
+        'onmouseleave="this.style.transform=\'\';this.style.boxShadow=\'0 4px 0 #B8460A,0 6px 14px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.25)\'" ' +
+        'title="Ver todos los platos para seguir agregando">' +
+        Util.ico('plus') + ' Nuevo Pedido</button>' +
       '<button class="btn ' + (Auth.can('cobrar')?'gold':'pri') + ' wide" id="btnKitchen" ' + (this.cart.length?'':'disabled') +
         ' style="padding:13px;margin-bottom:8px">' +
         (this.orderId ? 'Agregar a la comanda' : 'Enviar a cocina') +
@@ -3888,6 +4512,7 @@ const POS = {
     const bind = (id, fn) => { const el = document.getElementById(id); if (el) el.onclick = fn; };
     bind('btnPay', () => POS.pay());
     bind('btnKitchen', () => POS.sendKitchen());
+    bind('btnNuevoPedido', () => POS.nuevoPedido());
     bind('btnDesc', () => POS.discount());
     bind('btnProp', () => POS.tip());
     bind('btnSplit', () => POS.split());
@@ -4078,9 +4703,6 @@ const POS = {
         o.domicilio = Number(this.domicilio)||0;
         o.entrega = Object.assign({}, this.entrega);
       }
-      // Cada tanda deja su hora: la comanda imprime cuándo se pidió, no
-      // cuándo se imprimió, que son cosas distintas al reimprimir.
-      o.tiempos = Object.assign({}, o.tiempos, {['r' + ronda]:Util.now()});
       o.act = Util.now();
     } else {
       c.comandaSeq = (c.comandaSeq||0) + 1;
@@ -4090,7 +4712,7 @@ const POS = {
         fecha:Util.now(), items:nuevos, estado:'pendiente', nota:this.nota,
         tipo:this.tipo, domicilio:this.esLlevar() ? (Number(this.domicilio)||0) : 0,
         entrega:this.esLlevar() ? Object.assign({}, this.entrega) : null,
-        sede:c.sedeId, tiempos:{enviado:Util.now(), r1:Util.now()}, act:Util.now()
+        sede:c.sedeId, tiempos:{enviado:Util.now()}, act:Util.now()
       };
       DB.orders().push(o);
     }
@@ -4103,11 +4725,41 @@ const POS = {
     const mesa = o.mesa, id = o.id;
     this.reset();
     Router.render();
-    UI.toast('Comanda ' + o.numero + ' enviada a cocina · ' +
-      (o.tipo && o.tipo !== 'mesa' ? POS.TIPOS[o.tipo].corto.toUpperCase() : 'mesa ' + mesa) + '.','ok');
+    /* Toast especial: centrado en la parte superior, grande y destacado */
+    (()=>{
+      const box = document.getElementById('toasts');
+      const el = document.createElement('div');
+      const txt = '✓ Comanda ' + o.numero + ' enviada a cocina · ' +
+        (o.tipo && o.tipo !== 'mesa' ? POS.TIPOS[o.tipo].corto.toUpperCase() : 'Mesa ' + mesa);
+      el.className = 'toast comanda-ok';
+      el.textContent = txt;
+      box.appendChild(el);
+      const dur = 3800;
+      setTimeout(()=>{ el.style.opacity='0'; el.style.transition='.25s'; }, dur-250);
+      setTimeout(()=> el.remove(), dur);
+    })();
     if (Sync.activo() && !navigator.onLine)
       UI.toast('Sin red: la cocina la verá en cuanto vuelva la conexión.','warn', 4600);
     setTimeout(()=>Ticket.comanda(id, ronda), 350);
+  },
+  /** INTERVENCIÓN (corrección): "Nuevo Pedido" — botón naranja de la
+      sección Pedido. Se redirige su función: en vez de enviar a cocina,
+      simplemente abre/muestra la sección de platos con la categoría
+      "Todo" seleccionada, para que la mesera pueda seguir escogiendo
+      platos de un vistazo (útil cuando en la mesa hay varios clientes).
+      No toca el carrito ni envía nada a cocina. */
+  nuevoPedido(){
+    this.cat = 'all';
+    document.querySelectorAll('[data-cat]').forEach(x => x.classList.toggle('on', x.dataset.cat === 'all'));
+    this.paintGrid();
+    // En pantallas pequeñas el carrito se abre como hoja cubriendo la
+    // carta: se cierra para dejar visible la sección de platos + Todo.
+    const cajon = document.getElementById('cart');
+    if (cajon) cajon.classList.remove('open');
+    const grid = document.getElementById('pgrid');
+    if (grid) grid.scrollIntoView({behavior:'smooth', block:'start'});
+    const q = document.getElementById('pq');
+    if (q && window.innerWidth > 1024) q.focus();
   },
   /** Carga una comanda abierta en el carrito, para agregarle platos o para cobrarla. */
   loadOrder(id, paraCobrar){
@@ -4120,7 +4772,7 @@ const POS = {
     this.entrega = o.entrega ? Object.assign({}, o.entrega) : {direccion:'', telefono:'', quien:'mensajero'};
     if (paraCobrar){
       this.cart = o.items.map(i => ({lid:Util.uid('l'), pid:i.pid, nombre:i.nombre, precio:i.precio,
-        gramos:i.gramos, qty:i.qty, nota:i.nota, adiciones:i.adiciones||[], carne:i.carne, carneNombre:i.carneNombre||''}));
+        gramos:i.gramos, qty:i.qty, nota:i.nota||'', adiciones:Array.isArray(i.adiciones)?i.adiciones.map(a=>Object.assign({},a)):[], carne:i.carne, carneNombre:i.carneNombre||''}));
     }
     Router.go('pos');
     if (paraCobrar) setTimeout(()=>POS.pay(), 120);
@@ -4137,17 +4789,20 @@ const POS = {
     let pagos = personas
       ? Array.from({length:personas}, (_,i) => ({metodo:'Efectivo', monto: i === personas-1 ? t.total - Math.floor(t.total/personas)*(personas-1) : Math.floor(t.total/personas)}))
       : [{metodo:'Efectivo', monto:t.total}];
+    let recibeCliente = 0;
 
     const close = UI.modal({
       title:'Cobrar ' + Util.money(t.total), size:'',
       body:'<div id="payBox"></div>',
       footer:'<button class="btn" data-close>Volver</button>' +
-             '<button class="btn pri" id="doPay">Confirmar cobro</button>',
+             '<button class="btn pri" id="doPay">Confirmar cobro y facturar</button>',
       onMount(ov, cls){
         const box = ov.querySelector('#payBox');
         const paint = () => {
           const cubierto = pagos.reduce((a,p)=>a+(Number(p.monto)||0),0);
           const falta = t.total - cubierto;
+          const tieneEfectivo = pagos.some(p => p.metodo === 'Efectivo');
+          const cambioRecibe = recibeCliente > 0 ? recibeCliente - t.total : 0;
           box.innerHTML =
             '<div class="card" style="margin-bottom:12px"><div class="tot-row"><span>Subtotal</span><b>' + Util.money(t.subtotal) + '</b></div>' +
             (t.descuento?'<div class="tot-row"><span>Descuento</span><b>−' + Util.money(t.descuento) + '</b></div>':'') +
@@ -4162,17 +4817,51 @@ const POS = {
                 (pagos.length>1 ? '<button class="btn icon ghost" data-rm="' + i + '">' + Util.ico('x') + '</button>' : '') +
               '</div>').join('') +
             '<button class="btn sm ghost" id="addPay" style="margin-top:9px">' + Util.ico('plus') + ' Agregar forma de pago</button>' +
+
+            /* Calculadora de cambio: se muestra cuando hay pago en efectivo */
+            (tieneEfectivo
+              ? '<div class="card" style="margin-top:12px;border-color:var(--brass)">' +
+                  '<div class="eyebrow" style="margin-bottom:8px">Calculadora de cambio</div>' +
+                  '<label class="f" style="margin-bottom:0"><span style="font-size:12px">El cliente paga con:</span>' +
+                    '<input class="inp num" type="number" id="recibeBillete" value="' + (recibeCliente||'') +
+                    '" placeholder="Ej: 100000" min="0" style="text-align:right;font-size:18px;font-weight:700"></label>' +
+                  '<div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">' +
+                    [10000,20000,50000,100000].map(v =>
+                      '<button class="btn' + (recibeCliente===v?' gold':'') + '" data-bill="' + v + '" ' +
+                        'style="flex:1;min-width:80px;font-size:16px;font-weight:700;padding:12px 8px">' + Util.money(v,false) + '</button>'
+                    ).join('') +
+                  '</div>' +
+                  (recibeCliente > 0
+                    ? '<div style="margin-top:10px;padding:10px 14px;border-radius:8px;background:' +
+                        (cambioRecibe >= 0 ? 'rgba(62,155,98,.1)' : 'rgba(220,80,60,.08)') +
+                        ';text-align:center">' +
+                        '<div style="font-size:11px;color:var(--ash-dim)">' + (cambioRecibe >= 0 ? 'Devuelta al cliente' : 'Falta') + '</div>' +
+                        '<div style="font-size:28px;font-weight:800;letter-spacing:-.02em;color:' +
+                          (cambioRecibe >= 0 ? 'var(--ok)' : 'var(--ember-hi)') + '">' +
+                          (cambioRecibe >= 0 ? Util.money(cambioRecibe) : '−' + Util.money(Math.abs(cambioRecibe))) +
+                        '</div></div>'
+                    : '') +
+                '</div>'
+              : '') +
+
             '<div class="card" style="margin-top:12px;border-color:' + (Math.abs(falta)<1?'var(--line-soft)':'var(--ember-dim)') + '">' +
-              '<div class="row"><span class="mut" style="font-size:12.5px">' + (falta > 0 ? 'Falta por cubrir' : (falta < 0 ? 'Cambio a devolver' : 'Cuenta cuadrada')) + '</span>' +
+              '<div class="row"><span class="mut" style="font-size:12.5px">' + (falta > 0 ? 'Falta por cubrir' : (falta < 0 ? 'Excedente registrado' : 'Cuenta cuadrada')) + '</span>' +
               '<b class="num right" style="font-size:18px;color:' + (falta>0?'var(--ember-hi)':(falta<0?'var(--brass-hi)':'var(--ok)')) + '">' +
               Util.money(Math.abs(falta)) + '</b></div></div>';
-          box.querySelectorAll('[data-met]').forEach(s => s.onchange = e => { pagos[+s.dataset.met].metodo = e.target.value; });
-          box.querySelectorAll('[data-mon]').forEach(inp => inp.oninput = e => { pagos[+inp.dataset.mon].monto = Number(e.target.value)||0; paint(); });
+          box.querySelectorAll('[data-met]').forEach(s => s.onchange = e => { pagos[+s.dataset.met].metodo = e.target.value; paint(); });
+          box.querySelectorAll('[data-mon]').forEach(inp => inp.oninput = () => { pagos[+inp.dataset.mon].monto = Number(inp.value)||0; paint(); });
           box.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { pagos.splice(+b.dataset.rm,1); paint(); });
           box.querySelector('#addPay').onclick = () => {
             const falta2 = t.total - pagos.reduce((a,p)=>a+(Number(p.monto)||0),0);
             pagos.push({metodo:'Tarjeta débito', monto: Math.max(0, falta2)}); paint();
           };
+          /* Handlers de la calculadora de cambio */
+          const inpRecibe = box.querySelector('#recibeBillete');
+          if (inpRecibe) inpRecibe.oninput = () => { recibeCliente = Number(inpRecibe.value)||0; paint(); };
+          box.querySelectorAll('[data-bill]').forEach(b => b.onclick = () => {
+            recibeCliente = parseInt(b.dataset.bill, 10);
+            paint();
+          });
         };
         paint();
         ov.querySelector('#doPay').onclick = () => {
@@ -4207,6 +4896,15 @@ const POS = {
     // 1. Descuento de inventario en gramos, por corte
     const consumo = {};
     venta.items.forEach(i => { if (i.carne) consumo[i.carne] = (consumo[i.carne]||0) + i.gramos*i.qty; });
+    // 1b. Descuento de insumos adicionales (insumosExtra) por producto
+    venta.items.forEach(i => {
+      const prod = DB.product(i.pid);
+      if (prod && Array.isArray(prod.insumosExtra)){
+        prod.insumosExtra.forEach(ie => {
+          if (ie.id) consumo[ie.id] = (consumo[ie.id]||0) + (ie.qty||1)*i.qty;
+        });
+      }
+    });
     Object.entries(consumo).forEach(([mid, g]) => {
       const m = DB.meat(mid); if(!m) return;
       m.gramos = Math.max(0, m.gramos - g); m.act = Util.now();
@@ -4253,6 +4951,406 @@ const POS = {
 };
 Views.pos = {html:()=>POS.html(), mount:()=>POS.mount(), actions:()=>POS.actions()};
 
+/* ==========================================================================
+   MÓDULO DOMICILIOS — Gestión completa de pedidos a domicilio
+   Flujo: Nuevo → Datos cliente → Selección platos → Enviar cocina → Imprimir
+   ========================================================================== */
+const Domicilios = {
+  /* Estado del formulario activo en memoria */
+  _borrador: null,
+
+  _nuevoBorrador(){
+    return { nombre:'', contacto:'', direccion:'', telefono:'', items:[], nota:'', _id:null };
+  },
+
+  borrador(){ return this._borrador || (this._borrador = this._nuevoBorrador()); },
+
+  resetBorrador(){ this._borrador = null; },
+
+  /* Calcula totales del borrador actual */
+  calcBorrador(items){
+    const c = DB.d.config;
+    const subtotal = items.reduce((a,i)=>{
+      const adP = (i.adiciones||[]).reduce((s,x)=>s+(Number(x.precio)||0),0);
+      return a + (Number(i.precio||0) + adP) * (Number(i.qty)||1);
+    }, 0);
+    const impuesto = c.impuestoIncluido ? 0 : Math.round(subtotal*(Number(c.impuesto)||0)/100);
+    const domVal = Number(c.domicilioValor)||0;
+    return { subtotal, impuesto, domicilio: domVal, total: subtotal + impuesto + domVal };
+  },
+
+  /* Lista de domicilios del día (ventas tipo domicilio) */
+  listaHoy(){
+    const hoy = Util.today();
+    return (DB.d.sales||[]).filter(s => s.tipo === 'domicilio' && (s.fecha||'').slice(0,10) === hoy)
+      .slice().reverse();
+  }
+};
+
+Views.domicilios = {
+  actions(){
+    return '<button class="btn pri" data-act="nuevo">' + Util.ico('plus') + '<span>Nuevo domicilio</span></button>';
+  },
+
+  html(){
+    const lista = Domicilios.listaHoy();
+    const totalDia = lista.filter(s=>s.estado==='pagada').reduce((a,s)=>a+(s.total||0),0);
+    const enDespacho = lista.filter(s=>s.estado!=='pagada'&&!s.anulada).length;
+
+    const estadoBadge = s => {
+      if (s.anulada || s.estado==='anulada') return '<span class="badge bad">Anulado</span>';
+      if (s.estado==='pagada') return '<span class="badge ok">Cobrado</span>';
+      return '<span class="badge warn">En cocina</span>';
+    };
+
+    return '<div class="view-head"><div>' +
+        '<div class="eyebrow">Pedidos a domicilio de hoy · ' + Util.today() + '</div>' +
+        '<h2>Domicilios</h2></div></div>' +
+      '<div class="grid g-kpi" style="margin-bottom:14px">' +
+        UI.kpi('Pedidos hoy', String(lista.length), 'domicilios registrados') +
+        UI.kpi('Cobrado hoy', Util.money(totalDia), lista.filter(s=>s.estado==='pagada').length + ' cobrados') +
+        UI.kpi('En despacho', String(enDespacho), 'pendientes de cobro o entrega') +
+      '</div>' +
+      '<div class="card pad0">' +
+        UI.table(
+          [{t:'#'},{t:'Cliente'},{t:'Dirección'},{t:'Teléfono'},{t:'Platos',n:1},{t:'Total',n:1},{t:'Estado'}],
+          lista.length ? lista.map(s =>
+            '<tr style="cursor:pointer" data-domver="' + s.id + '">' +
+            '<td class="num">' + Util.esc(s.numero||'—') + '</td>' +
+            '<td style="font-weight:600">' + Util.esc((s.entrega&&s.entrega.nombre)||'—') + '</td>' +
+            '<td class="dim" style="font-size:12px">' + Util.esc((s.entrega&&s.entrega.direccion)||'—') + '</td>' +
+            '<td class="num">' + Util.esc((s.entrega&&s.entrega.telefono)||'—') + '</td>' +
+            '<td class="n">' + (s.items||[]).reduce((a,i)=>a+(i.qty||1),0) + '</td>' +
+            '<td class="n">' + Util.money(s.total||0) + '</td>' +
+            '<td>' + estadoBadge(s) + '</td></tr>') : [],
+          {emptyTitle:'Sin domicilios hoy', emptyMsg:'Pulsa "Nuevo domicilio" para registrar el primero.'}) +
+      '</div>';
+  },
+
+  mount(){
+    const b = document.querySelector('[data-act=nuevo]');
+    if (b) b.onclick = () => Views.domicilios.abrirFormulario();
+    document.querySelectorAll('[data-domver]').forEach(tr => {
+      tr.onclick = () => {
+        const s = (DB.d.sales||[]).find(x=>x.id===tr.dataset.domver);
+        if (s) Views.domicilios.verTicket(s);
+      };
+    });
+  },
+
+  /* ── Formulario principal de nuevo domicilio ── */
+  abrirFormulario(saleId){
+    const bor = Domicilios.borrador();
+    /* Si se pasa un saleId, cargar ese pedido en el borrador */
+    if (saleId && !bor._id){
+      const s = (DB.d.sales||[]).find(x=>x.id===saleId);
+      if (s){
+        Object.assign(bor, {
+          nombre:(s.entrega&&s.entrega.nombre)||'',
+          contacto:(s.entrega&&s.entrega.contacto)||'',
+          direccion:(s.entrega&&s.entrega.direccion)||'',
+          telefono:(s.entrega&&s.entrega.telefono)||'',
+          items:(s.items||[]).map(i=>Object.assign({},i)),
+          nota:s.nota||'', _id:s.id
+        });
+      }
+    }
+
+    const prods = DB.prods().filter(p=>p.activo);
+    const cats  = DB.cats().sort((a,b)=>a.orden-b.orden);
+
+    /* Agrupa productos por categoría */
+    const grupos = cats.map(c=>({cat:c, prods:prods.filter(p=>p.cat===c.id)})).filter(g=>g.prods.length);
+
+    /* ── Renders internos ── */
+    const calcT = () => Domicilios.calcBorrador(bor.items);
+
+    const renderResumen = () => {
+      const t = calcT();
+      if (!bor.items.length)
+        return '<div class="dim" style="text-align:center;padding:16px;font-size:13px">Agrega platos del menú de abajo</div>';
+      return bor.items.map((it, idx) => {
+        const adP = (it.adiciones||[]).reduce((s,x)=>s+(Number(x.precio)||0),0);
+        const lineaTotal = (Number(it.precio||0)+adP)*(Number(it.qty)||1);
+        return '<div class="row" style="gap:8px;padding:7px 0;border-bottom:1px solid var(--line-soft)">' +
+          '<button class="btn sm icon ghost" data-dom-rm="' + idx + '" style="color:var(--ember-hi)">' + Util.ico('trash') + '</button>' +
+          '<div style="flex:1;min-width:0">' +
+            '<div style="font-weight:600;font-size:13px">' + Util.esc(it.nombre) + '</div>' +
+            '<div class="dim" style="font-size:11px">' + Util.money(it.precio) + '/u' + (adP>0?' · adiciones +'+Util.money(adP):'') + '</div>' +
+          '</div>' +
+          '<div class="row" style="gap:5px;flex:none">' +
+            '<button class="btn sm icon ghost" data-dom-dec="' + idx + '">−</button>' +
+            '<span class="num" style="min-width:22px;text-align:center;font-weight:700">' + it.qty + '</span>' +
+            '<button class="btn sm icon ghost" data-dom-inc="' + idx + '">+</button>' +
+          '</div>' +
+          '<span class="num" style="min-width:80px;text-align:right;font-weight:700;color:var(--brass-hi)">' + Util.money(lineaTotal) + '</span>' +
+        '</div>';
+      }).join('') +
+      '<div style="display:flex;flex-direction:column;gap:4px;margin-top:10px;padding:10px;background:var(--char-850);border-radius:var(--r);border:1px solid var(--line)">' +
+        '<div class="row" style="font-size:12.5px"><span class="mut">Subtotal</span><b class="num right">' + Util.money(t.subtotal) + '</b></div>' +
+        (t.impuesto ? '<div class="row" style="font-size:12.5px"><span class="mut">Impuesto</span><b class="num right">' + Util.money(t.impuesto) + '</b></div>' : '') +
+        (t.domicilio ? '<div class="row" style="font-size:12.5px"><span class="mut">Envío</span><b class="num right" style="color:var(--brass-hi)">' + Util.money(t.domicilio) + '</b></div>' : '') +
+        '<div class="row" style="font-size:15px;font-weight:800;border-top:1px solid var(--line);padding-top:7px;margin-top:3px">' +
+          '<span>Total</span><b class="num right" style="color:var(--bone)">' + Util.money(t.total) + '</b>' +
+        '</div>' +
+      '</div>';
+    };
+
+    const renderCarta = () => {
+      if (!prods.length) return '<div class="dim" style="padding:14px;text-align:center">No hay platos activos.</div>';
+      return grupos.map(g =>
+        '<div style="margin-bottom:14px">' +
+          '<div class="eyebrow" style="margin-bottom:8px">' + Util.esc(g.cat.nombre) + '</div>' +
+          '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:7px">' +
+          g.prods.map(p => {
+            const en = bor.items.filter(i=>i.pid===p.id).reduce((a,i)=>a+(i.qty||1),0);
+            return '<button class="btn ' + (en?'gold':'ghost') + '" data-dom-add="' + p.id + '" ' +
+              'style="justify-content:flex-start;text-align:left;flex-direction:column;align-items:flex-start;' +
+              'padding:9px 11px;height:auto;min-height:56px;border-radius:var(--r)">' +
+              '<span style="font-size:12.5px;font-weight:600;line-height:1.25">' + Util.esc(p.nombre) + '</span>' +
+              '<span class="num" style="font-size:11.5px;color:var(--brass-hi);margin-top:3px">' + Util.money(p.precio) + '</span>' +
+              (en ? '<span style="font-size:10px;color:var(--ok);margin-top:2px">× ' + en + ' en pedido</span>' : '') +
+            '</button>';
+          }).join('') + '</div></div>'
+      ).join('');
+    };
+
+    const close = UI.modal({
+      title:false, size:'lg',
+      body:
+        /* ── Cabecera propia ── */
+        '<div style="display:flex;align-items:center;gap:11px;margin:-16px -16px 0;padding:14px 16px;' +
+          'background:var(--char-850);border-bottom:1px solid var(--line-soft);position:sticky;top:0;z-index:10">' +
+          '<span style="color:var(--brass);display:flex">' + Util.ico('moto') + '</span>' +
+          '<h3 style="font-size:15px;font-weight:700;flex:1">' + (bor._id ? 'Editar domicilio' : 'Nuevo domicilio') + '</h3>' +
+          '<button class="btn icon ghost" data-close>' + Util.ico('x') + '</button>' +
+        '</div>' +
+
+        /* ── Información del domicilio ── */
+        '<div style="margin-top:18px"><div class="eyebrow" style="margin-bottom:10px">Información del domicilio</div>' +
+        '<div class="grid g-form">' +
+          '<label class="f">Nombre del cliente<input class="inp" id="dm-nombre" placeholder="Nombre completo" value="' + Util.esc(bor.nombre) + '"></label>' +
+          '<label class="f">Contacto / Alias<input class="inp" id="dm-contacto" placeholder="Referencia" value="' + Util.esc(bor.contacto) + '"></label>' +
+          '<label class="f" style="grid-column:1/-1">Dirección de entrega<input class="inp" id="dm-dir" placeholder="Calle, barrio, referencias…" value="' + Util.esc(bor.direccion) + '"></label>' +
+          '<label class="f">Teléfono<input class="inp" id="dm-tel" type="tel" placeholder="300 000 0000" value="' + Util.esc(bor.telefono) + '"></label>' +
+        '</div></div>' +
+
+        /* ── Resumen del pedido ── */
+        '<div style="margin-top:20px">' +
+          '<div class="eyebrow" style="margin-bottom:8px">Pedido</div>' +
+          '<div id="dm-resumen">' + renderResumen() + '</div>' +
+        '</div>' +
+
+        /* ── Carta de selección ── */
+        '<div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--line-soft)">' +
+          '<div class="eyebrow" style="margin-bottom:10px">Menú — toca un plato para agregarlo</div>' +
+          '<div id="dm-carta">' + renderCarta() + '</div>' +
+        '</div>' +
+
+        /* ── Nota general ── */
+        '<div style="margin-top:14px">' +
+          '<label class="f" style="grid-column:1/-1">Observaciones del pedido' +
+            '<textarea class="inp" id="dm-nota" rows="2" placeholder="Indicaciones especiales, alergias, etc.">' +
+              Util.esc(bor.nota) + '</textarea>' +
+          '</label>' +
+        '</div>',
+
+      footer:
+        '<button class="btn" data-close>Cancelar</button>' +
+        '<button class="btn pri" id="dm-guardar">' + Util.ico('fire') + ' Guardar y enviar a cocina</button>',
+
+      onMount(ov){
+        /* Leer campos de texto */
+        const g = id => ov.querySelector('#' + id);
+        const sync = () => {
+          bor.nombre   = (g('dm-nombre').value||'').trim();
+          bor.contacto = (g('dm-contacto').value||'').trim();
+          bor.direccion= (g('dm-dir').value||'').trim();
+          bor.telefono = (g('dm-tel').value||'').trim();
+          bor.nota     = (g('dm-nota').value||'').trim();
+        };
+        ['dm-nombre','dm-contacto','dm-dir','dm-tel','dm-nota'].forEach(id=>{
+          const el = g(id); if(el) el.oninput = sync;
+        });
+
+        /* Re-render de resumen + carta */
+        const refrescar = () => {
+          g('dm-resumen').innerHTML = renderResumen();
+          g('dm-carta').innerHTML   = renderCarta();
+          enlazar();
+        };
+
+        const enlazar = () => {
+          ov.querySelectorAll('[data-dom-rm]').forEach(b => b.onclick = () => {
+            bor.items.splice(parseInt(b.dataset.domRm),1); refrescar();
+          });
+          ov.querySelectorAll('[data-dom-inc]').forEach(b => b.onclick = () => {
+            bor.items[parseInt(b.dataset.domInc)].qty++; refrescar();
+          });
+          ov.querySelectorAll('[data-dom-dec]').forEach(b => b.onclick = () => {
+            const idx = parseInt(b.dataset.domDec);
+            if (bor.items[idx].qty > 1) bor.items[idx].qty--;
+            else bor.items.splice(idx,1);
+            refrescar();
+          });
+          ov.querySelectorAll('[data-dom-add]').forEach(b => b.onclick = () => {
+            const pid = b.dataset.domAdd;
+            const p = DB.product(pid); if (!p) return;
+            const ex = bor.items.find(i=>i.pid===pid && !(i.nota));
+            if (ex) ex.qty++;
+            else bor.items.push({
+              pid:p.id, nombre:p.nombre, precio:Number(p.precio)||0,
+              qty:1, gramos:p.gramos||0, nota:'', adiciones:[],
+              carne:p.carne||null, carneNombre:'',
+              total:Number(p.precio)||0
+            });
+            refrescar();
+          });
+        };
+        enlazar();
+
+        /* Guardar y enviar a cocina */
+        ov.querySelector('#dm-guardar').onclick = () => {
+          sync();
+          if (!bor.nombre)    return UI.toast('Escribe el nombre del cliente.','warn');
+          if (!bor.direccion) return UI.toast('La dirección de entrega es obligatoria.','warn');
+          if (!bor.items.length) return UI.toast('Agrega al menos un plato al pedido.','warn');
+
+          const c = DB.d.config;
+          const t = Domicilios.calcBorrador(bor.items);
+          const numero = (c.prefijo||'') + String(Number(c.consecutivo)||1).padStart(5,'0');
+          const ahora  = Util.now();
+
+          const venta = {
+            id: bor._id || Util.uid('v'), numero, fecha:ahora,
+            sede:c.sedeId, userId:(Auth.user||{}).id,
+            clienteId:'cl_1', mesa:'DOM', tipo:'domicilio',
+            entrega:{nombre:bor.nombre, contacto:bor.contacto, direccion:bor.direccion, telefono:bor.telefono},
+            items: bor.items.map(i=>{
+              const adP=(i.adiciones||[]).reduce((s,x)=>s+(Number(x.precio)||0),0);
+              return Object.assign({},i,{total:(Number(i.precio||0)+adP)*(Number(i.qty)||1)});
+            }),
+            subtotal:t.subtotal, descuento:0, impuesto:t.impuesto,
+            propina:0, domicilio:t.domicilio, costo:0,
+            total:t.total, pagos:[], cambio:0,
+            estado:'pendiente', nota:bor.nota, sync:false, act:ahora
+          };
+
+          if (!bor._id) c.consecutivo = (Number(c.consecutivo)||1)+1;
+
+          /* Guardar / actualizar la venta */
+          if (bor._id){
+            const idx = DB.d.sales.findIndex(x=>x.id===bor._id);
+            if (idx>=0) DB.d.sales[idx]=venta; else DB.d.sales.push(venta);
+          } else {
+            DB.d.sales.push(venta);
+          }
+          DB.touch('sales','config');
+          Sync.enqueue('sales', bor._id ? 'update' : 'create', venta);
+
+          /* Crear orden para KDS */
+          if (!DB.d.orders) DB.d.orders=[];
+          const yaOrden = DB.d.orders.find(o=>o.saleId===venta.id);
+          if (!yaOrden){
+            const seq = (Number(c.comandaSeq)||0)+1;
+            c.comandaSeq = seq;
+            const orden = {
+              id:Util.uid('o'), saleId:venta.id, numero:'C'+String(seq).padStart(4,'0'),
+              mesa:'DOM-'+(bor.telefono||'').slice(-4),
+              tipo:'domicilio', entrega:venta.entrega,
+              items:venta.items, estado:'pendiente',
+              nota:bor.nota, fecha:ahora, act:ahora,
+              meseroId:(Auth.user||{}).id, sync:false
+            };
+            DB.d.orders.push(orden);
+            DB.touch('orders');
+            Sync.enqueue('orders','create',orden);
+          }
+
+          DB.log('domicilio:crear', numero+' · '+bor.nombre+' · '+bor.direccion+' · '+Util.money(t.total), venta.id);
+          bor._id = venta.id;
+          UI.toast('Pedido de '+bor.nombre+' enviado a cocina.','ok',3800);
+          close();
+          Views.domicilios.imprimirTicket(venta);
+        };
+      }
+    });
+  },
+
+  /* ── Ticket de domicilio ── */
+  imprimirTicket(venta){
+    const c = DB.d.config;
+    const w58 = c.ticket==='58';
+    const line = '<hr>';
+    const it = (venta.items||[]).map(i=>{
+      const adP=(i.adiciones||[]).reduce((s,x)=>s+(Number(x.precio)||0),0);
+      const lt=(Number(i.precio||0)+adP)*(Number(i.qty)||1);
+      return '<tr><td colspan="2"><b>' + Util.esc(i.nombre) + '</b></td></tr>' +
+        '<tr><td>' + i.qty + ' × ' + Util.money(i.precio,false) + (adP?'  +adic '+Util.money(adP,false):'') + '</td><td class="r b">' + Util.money(lt,false) + '</td></tr>' +
+        (i.nota?'<tr><td colspan="2">  * '+Util.esc(i.nota)+'</td></tr>':'');
+    }).join('');
+
+    const sub = (venta.items||[]).reduce((a,i)=>{
+      const adP=(i.adiciones||[]).reduce((s,x)=>s+(Number(x.precio)||0),0);
+      return a+(Number(i.precio||0)+adP)*(Number(i.qty)||1);
+    },0);
+
+    const cuerpo =
+      '<div class="ticket '+(w58?'w58':'')+'">' +
+      (Ticket.logoImp()?'<div class="c"><img src="'+Ticket.logoImp()+'" style="max-width:55%;height:auto;margin-bottom:4px"></div>':'') +
+      '<div class="c b lg">'+Util.esc((c.empresa||'').toUpperCase())+'</div>' +
+      '<div class="c" style="font-size:10px">'+Util.esc(c.dir||'')+' · Tel: '+Util.esc(c.tel||'')+'</div>' +
+      line +
+      '<div class="c b" style="font-size:16px;letter-spacing:.1em">🛵 DOMICILIO</div>' +
+      '<div class="c b tk-mesa"># '+Util.esc(venta.numero)+'</div>' +
+      '<div class="c tk-sub">'+Util.dt(venta.fecha)+'</div>' +
+      line +
+      '<div><b>CLIENTE</b></div>' +
+      '<div>'+Util.esc((venta.entrega&&venta.entrega.nombre)||'—')+'</div>' +
+      ((venta.entrega&&venta.entrega.contacto)?'<div class="mut" style="font-size:10px">Ref: '+Util.esc(venta.entrega.contacto)+'</div>':'') +
+      '<div style="margin-top:4px"><b>Dir:</b> '+Util.esc((venta.entrega&&venta.entrega.direccion)||'—')+'</div>' +
+      '<div><b>Tel:</b> '+Util.esc((venta.entrega&&venta.entrega.telefono)||'—')+'</div>' +
+      line +
+      '<div><b>PEDIDO</b></div>' +
+      '<table style="width:100%">'+it+'</table>' +
+      line +
+      '<table style="width:100%">' +
+        '<tr><td>Subtotal</td><td class="r">'+Util.money(sub,false)+'</td></tr>' +
+        (venta.impuesto?'<tr><td>'+(c.impuestoNombre||'Impuesto')+'</td><td class="r">'+Util.money(venta.impuesto,false)+'</td></tr>':'') +
+        (venta.domicilio?'<tr><td>Domicilio</td><td class="r">'+Util.money(venta.domicilio,false)+'</td></tr>':'') +
+        '<tr style="font-size:14px;font-weight:700"><td>TOTAL</td><td class="r">'+Util.money(venta.total,false)+'</td></tr>' +
+      '</table>' +
+      (venta.nota?line+'<div style="font-size:10px;font-style:italic">'+Util.esc(venta.nota)+'</div>':'') +
+      line +
+      '<div class="c">'+Util.esc(c.pieTicket||'¡Gracias por su pedido!')+'</div></div>';
+
+    const closeT = UI.modal({
+      title:'Domicilio · '+Util.esc((venta.entrega&&venta.entrega.nombre)||venta.numero), size:'sm',
+      body:'<div class="ticket-frame">'+cuerpo+'</div>',
+      footer:
+        '<button class="btn gold" id="dm-print">'+Util.ico('print')+' Imprimir</button>' +
+        '<button class="btn pri" id="dm-nuevo">'+Util.ico('plus')+' Nuevo pedido</button>',
+      onMount(ov){
+        ov.querySelector('#dm-print').onclick = () => {
+          DB.log('domicilio:imprimir', venta.numero);
+          UI.imprimir(ov);
+          /* Cerrar inmediatamente y resetear para nuevo pedido */
+          setTimeout(()=>{ closeT(); Domicilios.resetBorrador(); Router.render(); }, 350);
+        };
+        ov.querySelector('#dm-nuevo').onclick = () => {
+          closeT();
+          Domicilios.resetBorrador();
+          Router.render();
+          setTimeout(()=>Views.domicilios.abrirFormulario(), 180);
+        };
+      }
+    });
+  },
+
+  /* Ver / reimprimir un domicilio existente */
+  verTicket(venta){ Views.domicilios.imprimirTicket(venta); }
+};
+
 /* --- Comandas: el puente entre el mesero, la parrilla y la caja ------
    Ciclo: pendiente → preparando → listo → entregado → cobrada.
    Los gramos se reservan al enviar a cocina y se descuentan al cobrar.
@@ -4266,7 +5364,7 @@ const Orders = {
     cobrada:   {t:'Cobrada',     b:'ok',   sig:null,         accion:null},
     cancelada: {t:'Cancelada',   b:'bad',  sig:null,         accion:null}
   },
-  total(o){ return o.items.reduce((a,i)=>a + i.precio*i.qty, 0); },
+  total(o){ return o.items.reduce((a,i)=>a + (i.precio + ((i.adiciones||[]).reduce((s,x)=>s+(x.precio||0),0)))*i.qty, 0); },
   gramos(o){ return o.items.reduce((a,i)=>a + (i.gramos||0)*i.qty, 0); },
   minutos(o){ return Math.floor((Date.now() - new Date((o.tiempos||{}).enviado || o.fecha).getTime())/60000); },
   reloj(o){
@@ -4430,14 +5528,16 @@ Views.orders = {
           (o.tipo && o.tipo !== 'mesa' ? Util.esc(POS.TIPOS[o.tipo].corto) : 'Mesa ' + Util.esc(o.mesa)) + '</div>' +
         '<div class="dim num" style="font-size:11px">' + Util.esc(o.numero) + ' · ' + min + ' min · ' +
         Util.esc(((DB.user(o.meseroId)||{}).nombre||'').split(' ')[0]) + '</div></div>' +
-        '<span class="badge ' + est.b + ' right">' + est.t + '</span></div>' +
-        '<div class="col" style="gap:4px">' + o.items.slice(0,6).map((i, idx) =>
-          '<div class="row" style="gap:8px"><span class="num" style="color:var(--brass);min-width:20px">' + i.qty + '</span>' +
-          '<span style="font-size:12.5px">' + Util.esc(i.nombre) + '</span>' +
-          '<span class="num right dim" style="font-size:12px">' + Util.money(i.precio*i.qty) + '</span>' +
+        '<span class="badge ' + est.b + ' right" style="font-size:15px;font-weight:800;padding:8px 14px;letter-spacing:.07em;text-transform:uppercase;min-width:100px;text-align:center">' + est.t + '</span></div>' +
+        '<div class="col" style="gap:4px">' + o.items.slice(0,6).map((i, idx) => {
+          const adPrecioItem = (i.adiciones||[]).reduce((s,x)=>s+(Number(x.precio)||0),0);
+          const lineaTotal = (Number(i.precio||0) + adPrecioItem) * (Number(i.qty)||1);
+          return '<div class="row" style="gap:8px"><span class="num" style="color:var(--brass);min-width:20px">' + i.qty + '</span>' +
+          '<span style="font-size:12.5px">' + Util.esc(i.nombre) + (adPrecioItem>0 ? ' <span style="color:var(--ember-hi);font-size:10px">+adic</span>' : '') + '</span>' +
+          '<span class="num right dim" style="font-size:12px">' + Util.money(lineaTotal) + '</span>' +
           (Auth.can('anular') ? '<button class="btn sm ghost" data-oline="' + o.id + '" data-idx="' + idx +
             '" title="Quitar del pedido" style="padding:1px 6px;color:var(--ash-dim);font-size:12px">×</button>' : '') +
-          '</div>').join('') +
+          '</div>';}).join('') +
           (o.items.length > 6 ? '<div class="dim" style="font-size:11.5px">y ' + (o.items.length-6) + ' líneas más</div>' : '') +
         '</div>' +
         (o.domicilio ? '<div class="row" style="gap:8px"><span class="badge llevar">Domicilio</span>' +
@@ -4448,6 +5548,7 @@ Views.orders = {
         '<div class="row wrap" style="gap:7px">' +
           (Auth.can('pos') ? '<button class="btn sm grow" data-add="' + o.id + '">Agregar</button>' : '') +
           '<button class="btn sm grow" data-pre="' + o.id + '">Precuenta</button>' +
+          '<button class="btn sm" data-tk="' + o.id + '">' + Util.ico('print') + ' Comanda</button>' +
           (Auth.can('cobrar') ? '<button class="btn sm pri grow" data-pay="' + o.id + '">Cobrar</button>' : '') +
           (Auth.can('anular') ? '<button class="btn sm ghost" data-can="' + o.id + '" style="color:var(--ash-dim)">Cancelar</button>' : '') +
         '</div></div>';
@@ -4486,6 +5587,7 @@ Views.orders = {
     document.querySelectorAll('[data-add]').forEach(b => b.onclick = () => POS.loadOrder(b.dataset.add, false));
     document.querySelectorAll('[data-pay]').forEach(b => b.onclick = () => POS.loadOrder(b.dataset.pay, true));
     document.querySelectorAll('[data-pre]').forEach(b => b.onclick = () => Ticket.precuenta(b.dataset.pre));
+    document.querySelectorAll('[data-tk]').forEach(b => b.onclick = () => Ticket.comanda(b.dataset.tk));
     document.querySelectorAll('[data-can]').forEach(b => b.onclick = () => Orders.cancelar(b.dataset.can));
     document.querySelectorAll('[data-oline]').forEach(b => b.onclick = () => Orders.quitarLinea(b.dataset.oline, Number(b.dataset.idx)));
     const n = document.querySelector('[data-act=new]');
@@ -4496,19 +5598,84 @@ Views.orders = {
 
 /* --- Ticket térmico 58 / 80 mm -------------------------------------- */
 const Ticket = {
+  /** Logotipo ya preparado para papel: blanco y negro puro, sin fondo.
+      Se calcula al arrancar y cada vez que se cambia el logotipo. */
+  _logoBN:null,
+
+  /** Convierte el logotipo a alto contraste. Si el fondo es oscuro se invierte,
+      de forma que el papel quede blanco y solo el dibujo salga en negro. El CSS
+      no puede hacer esto: dentro de una imagen no hay fondo, son píxeles, y la
+      impresora los marca todos. Además se umbraliza, porque una térmica solo
+      sabe marcar o no marcar y los grises salen como tramado sucio. */
+  prepararLogo(){
+    const fuente = (DB.d.config.logo || '').trim() || Ticket.LOGO_PRINT;
+    return new Promise(resolve => {
+      try{
+        const img = new Image();
+        img.onerror = () => { Ticket._logoBN = null; resolve(null); };
+        img.onload = () => {
+          try{
+            const lado = Math.min(420, Math.max(img.width, img.height) || 280);
+            const esc = lado / Math.max(img.width, img.height);
+            const w = Math.max(1, Math.round(img.width*esc));
+            const h = Math.max(1, Math.round(img.height*esc));
+            const c = document.createElement('canvas');
+            c.width = w; c.height = h;
+            const g = c.getContext('2d');
+            g.fillStyle = '#fff'; g.fillRect(0, 0, w, h);   // por si trae transparencia
+            g.drawImage(img, 0, 0, w, h);
+            const d = g.getImageData(0, 0, w, h);
+            const p = d.data;
+
+            let suma = 0, n = 0;
+            const mirar = (x, y) => {
+              const i = (y*w + x)*4;
+              suma += (p[i]*0.299 + p[i+1]*0.587 + p[i+2]*0.114); n++;
+            };
+            for (let x = 0; x < w; x += Math.max(1, Math.floor(w/40))){ mirar(x, 0); mirar(x, h-1); }
+            for (let y = 0; y < h; y += Math.max(1, Math.floor(h/40))){ mirar(0, y); mirar(w-1, y); }
+            const fondoOscuro = (suma/Math.max(1,n)) < 128;
+
+            for (let i = 0; i < p.length; i += 4){
+              let l = p[i]*0.299 + p[i+1]*0.587 + p[i+2]*0.114;
+              if (fondoOscuro) l = 255 - l;
+              const v = l < 150 ? 0 : 255;
+              p[i] = p[i+1] = p[i+2] = v;
+              p[i+3] = 255;
+            }
+            g.putImageData(d, 0, 0);
+            Ticket._logoBN = c.toDataURL('image/png');
+            resolve(Ticket._logoBN);
+          }catch(e){ Ticket._logoBN = null; resolve(null); }
+        };
+        img.src = fuente;
+      }catch(e){ Ticket._logoBN = null; resolve(null); }
+    });
+  },
+
+  /** Lo que se pone en el ticket, o nada si el negocio prefiere no imprimirlo. */
+  logoImp(){
+    if (DB.d.config.logoTicket === false) return '';
+    return Ticket._logoBN || (DB.d.config.logo || '').trim() || Ticket.LOGO_PRINT;
+  },
+
   LOGO_PRINT:'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQIAHAAcAAD/4QVMaHR0cDovL25zLmFkb2JlLmNvbS94YXAvMS4wLwA8P3hwYWNrZXQgYmVnaW49J++7vycgaWQ9J1c1TTBNcENlaGlIenJlU3pOVGN6a2M5ZCc/Pgo8eDp4bXBtZXRhIHhtbG5zOng9J2Fkb2JlOm5zOm1ldGEvJz4KPHJkZjpSREYgeG1sbnM6cmRmPSdodHRwOi8vd3d3LnczLm9yZy8xOTk5LzAyLzIyLXJkZi1zeW50YXgtbnMjJz4KCiA8cmRmOkRlc2NyaXB0aW9uIHJkZjphYm91dD0nJwogIHhtbG5zOkF0dHJpYj0naHR0cDovL25zLmF0dHJpYnV0aW9uLmNvbS9hZHMvMS4wLyc+CiAgPEF0dHJpYjpBZHM+CiAgIDxyZGY6U2VxPgogICAgPHJkZjpsaSByZGY6cGFyc2VUeXBlPSdSZXNvdXJjZSc+CiAgICAgPEF0dHJpYjpDcmVhdGVkPjIwMjYtMDktMDU8L0F0dHJpYjpDcmVhdGVkPgogICAgIDxBdHRyaWI6RGF0YT57JnF1b3Q7ZG9jJnF1b3Q7OiZxdW90O0RBSEl3ODF4WWhvJnF1b3Q7LCZxdW90O3VzZXImcXVvdDs6JnF1b3Q7VUFDdk5jVW9TSVUmcXVvdDssJnF1b3Q7YnJhbmQmcXVvdDs6JnF1b3Q7QWNjZXNvIFAyJnF1b3Q7fTwvQXR0cmliOkRhdGE+CiAgICAgPEF0dHJpYjpFeHRJZD4zZDVkMTYyMC0xYzYyLTRkMzUtYWYwNy1kMDBiODI4NDI5ZTM8L0F0dHJpYjpFeHRJZD4KICAgICA8QXR0cmliOkZiSWQ+NTI1MjY1OTE0MTc5NTgwPC9BdHRyaWI6RmJJZD4KICAgICA8QXR0cmliOlRvdWNoVHlwZT4yPC9BdHRyaWI6VG91Y2hUeXBlPgogICAgPC9yZGY6bGk+CiAgIDwvcmRmOlNlcT4KICA8L0F0dHJpYjpBZHM+CiA8L3JkZjpEZXNjcmlwdGlvbj4KCiA8cmRmOkRlc2NyaXB0aW9uIHJkZjphYm91dD0nJwogIHhtbG5zOmRjPSdodHRwOi8vcHVybC5vcmcvZGMvZWxlbWVudHMvMS4xLyc+CiAgPGRjOnRpdGxlPgogICA8cmRmOkFsdD4KICAg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',
   render(v, ancho){
     const c = DB.d.config, w58 = ancho === '58';
     const cli = DB.client(v.clienteId) || {nombre:'Consumidor final'};
     const line = '<hr>';
-    const it = v.items.map(i =>
-      '<tr><td colspan="2">' + Util.esc(i.nombre) + (i.carneNombre ? ' (' + Util.esc(i.carneNombre) + ')' : '') +
+    const it = v.items.map(i => {
+      const adP = (i.adiciones||[]).reduce((s,a)=>s+(Number(a.precio)||0),0);
+      const lineaTotal = (Number(i.precio||0)+adP)*(Number(i.qty)||1);
+      return '<tr><td colspan="2">' + Util.esc(i.nombre) + (i.carneNombre ? ' (' + Util.esc(i.carneNombre) + ')' : '') +
         (i.gramos && DB.unidadDe(i.carne) !== 'und' ? ' (' + Util.cantCorta(i.gramos, DB.unidadDe(i.carne)) + ')' : '') + '</td></tr>' +
-      '<tr><td>' + i.qty + ' x ' + Util.money(i.precio,false) + '</td><td class="r">' + Util.money(i.total,false) + '</td></tr>' +
+      '<tr><td>' + i.qty + ' x ' + Util.money(i.precio,false) + '</td><td class="r"><b>' + Util.money(lineaTotal,false) + '</b></td></tr>' +
       (i.nota ? '<tr><td colspan="2">  * ' + Util.esc(i.nota) + '</td></tr>' : '') +
-      ((i.adiciones&&i.adiciones.length) ? i.adiciones.map(a=>'<tr><td>  + ' + Util.esc(a.nombre) + '</td><td class="r">' + Util.money(a.precio,false) + '</td></tr>').join('') : '')).join('');
+      ((i.adiciones&&i.adiciones.length) ? i.adiciones.map(a=>'<tr><td>  ⊕ ' + Util.esc(a.nombre) + '</td><td class="r">' + (a.precio>0?'+'+Util.money(a.precio,false):'sin cargo') + '</td></tr>').join('') : '');
+    }).join('');
     return '<div class="ticket ' + (w58?'w58':'') + '" id="tprint">' +
-      '<div class="c"><img src="' + (c.logo || Ticket.LOGO_PRINT) + '" style="max-width:55%;height:auto;margin-bottom:4px"></div>' +
+      (Ticket.logoImp() ? '<div class="c"><img src="' + Ticket.logoImp() +
+        '" style="max-width:55%;height:auto;margin-bottom:4px;background:#fff"></div>' : '') +
       '<div class="c b lg">' + Util.esc(c.empresa.toUpperCase()) + '</div>' +
       '<div class="c">NIT ' + Util.esc(c.nit) + '<br>' + Util.esc(c.dir) + '<br>' + Util.esc(c.tel) + '</div>' +
       '<div class="c" style="font-size:9px;margin-top:3px">' + Util.esc(c.resolucion) + '</div>' +
@@ -4536,101 +5703,122 @@ const Ticket = {
       '<div class="c" style="font-size:9px;margin-top:5px">' + Util.esc(c.sede) + ' · ' + (v.sync?'sincronizada':'pendiente de sincronizar') + '</div>' +
     '</div>';
   },
-  /** Comanda de cocina: sin precios, solo lo que hay que asar.
-
-      Con `ronda` sale unicamente esa tanda: es lo que se imprime al enviar el
-      pedido, y es lo unico que la cocina tiene que preparar.
-
-      Sin `ronda` es una reimpresion. Antes salia el pedido entero sin ninguna
-      marca, identico a una comanda nueva, asi que la parrilla volvia a hacer
-      los platos que ya habian salido. Ahora se avisa que es una reimpresion y
-      cada tanda va separada con su hora, igual que se ve en la pantalla de
-      cocina. */
+  /** Comanda de cocina: papel grande, con adiciones detalladas y precio para despacho. */
   comanda(orderId, ronda){
     const o = DB.order(orderId); if (!o) return;
-    const c = DB.d.config;
-    // Una comanda que llega de otra tablet puede traer un tipo desconocido:
-    // se cae a "mesa" en vez de reventar y dejar a la cocina sin papel.
-    const tipo = POS.TIPOS[o.tipo] || POS.TIPOS.mesa;
+    const items = o.items.filter(i => !ronda || i.ronda === ronda);
     const llevar = o.tipo && o.tipo !== 'mesa';
-    const reimpresion = !ronda;
-    const items = (o.items || []).filter(i => !ronda || (i.ronda || 1) === ronda);
-    if (!items.length) return UI.toast('Esa comanda no tiene platos para imprimir.','warn');
-
-    // Las tandas salen separadas y en orden: la cocina lee de arriba abajo.
-    const tandas = [];
-    items.forEach(i => {
-      const n = i.ronda || 1;
-      let t = tandas.find(x => x.n === n);
-      if (!t) tandas.push(t = {n, items:[]});
-      t.items.push(i);
-    });
-    tandas.sort((a,b) => a.n - b.n);
-    const hora = n => Util.time((o.tiempos||{})['r' + n] || (o.tiempos||{}).enviado || o.fecha);
-
-    let ancho = String(c.ticket) === '58' ? '58' : '80';
-
-    const linea = i => {
-      const ins = DB.meat(i.carne);
-      return '<div class="cm-it"><div class="cm-nom">' + i.qty + ' \u00d7 ' + Util.esc(i.nombre) + '</div>' +
-        (i.carneNombre ? '<div class="cm-car">&gt; ' + Util.esc(i.carneNombre.toUpperCase()) + '</div>' : '') +
-        // La cantidad solo se imprime si hay un insumo real detras. Sin el,
-        // la unidad se adivinaba y salian "porciones" de cosas que no lo son.
-        (i.gramos && ins ? '<div class="cm-can">' + Util.cantIns(i.gramos*i.qty, ins) + '</div>' : '') +
-        (i.nota ? '<div class="cm-not">&gt;&gt; ' + Util.esc(i.nota.toUpperCase()) + '</div>' : '') +
-        ((i.adiciones && i.adiciones.length)
-          ? i.adiciones.map(a => '<div class="cm-adi">[+] ' + Util.esc(a.nombre.toUpperCase()) + '</div>').join('') : '') +
-        '</div>';
-    };
-
-    const cuerpo = () => '<div class="ticket comanda ' + (ancho === '58' ? 'w58' : '') + '">' +
-      // El logotipo solo si el negocio cargo el suyo: en cocina el papel y los
-      // segundos de impresion valen mas que un emblema.
-      (c.logo ? '<div class="c"><img src="' + c.logo + '" style="max-width:45%;height:auto;margin-bottom:4px"></div>' : '') +
-      '<div class="c cm-rot">COCINA</div>' +
-      '<div class="c">' + Util.esc(c.empresa) + (c.sede ? ' \u00b7 ' + Util.esc(c.sede) : '') + '</div>' +
-      (reimpresion ? '<div class="c cm-avi">REIMPRESI\u00d3N ' + Util.time(Util.now()) +
-        '<br>NO ES UN PEDIDO NUEVO</div>' : '') +
-      (llevar ? '<div class="c cm-tipo">** ' + Util.esc(tipo.corto.toUpperCase()) + ' **</div>' : '') +
-      '<div class="c cm-mesa">' +
-        (llevar ? Util.esc(o.mesa || tipo.corto) : 'MESA ' + Util.esc(o.mesa)) + '</div>' +
-      '<div class="c">' + Util.esc(o.numero) + ' \u00b7 ' +
-        Util.esc((DB.user(o.meseroId)||{}).nombre || '') + '</div>' +
-      tandas.map(t =>
-        ((tandas.length > 1 || t.n > 1)
-          ? '<div class="cm-ronda">RONDA ' + t.n + ' \u00b7 ' + hora(t.n) + '</div>'
-          : '<div class="c">' + hora(t.n) + '</div><hr>') +
-        t.items.map(linea).join('')).join('') +
-      (o.nota ? '<hr><div><b>Nota:</b> ' + Util.esc(o.nota) + '</div>' : '') +
+    /* Total de adiciones por ítem */
+    const adTotalItem = (i) => (i.adiciones||[]).reduce((s,a)=>s+a.precio,0);
+    /* Subtotal de la comanda (esta ronda) */
+    const subtotalRonda = items.reduce((s,i)=>(s + (i.precio + adTotalItem(i))*i.qty),0);
+    const cuerpo = '<div class="ticket">' +
+      (Ticket.logoImp() ? '<div class="c"><img src="' + Ticket.logoImp() +
+        '" style="max-width:45%;height:auto;margin-bottom:3px;background:#fff"></div>' : '') +
+      '<div class="c b tk-titulo">── COCINA ──</div>' +
+      (llevar ? '<div class="c b tk-llevar">** ' + POS.TIPOS[o.tipo].corto.toUpperCase() + ' **</div>' : '') +
+      '<div class="c b tk-mesa">' +
+        (llevar ? Util.esc(o.mesa || POS.TIPOS[o.tipo].corto) : 'MESA ' + Util.esc(o.mesa)) + '</div>' +
+      '<div class="c tk-sub">' + Util.esc(o.numero) + (ronda>1 ? ' · RONDA ' + ronda : ' · RONDA 1') + '</div>' +
+      '<div class="c tk-sub">' + Util.time(Util.now()) + ' · ' + Util.esc((DB.user(o.meseroId)||{}).nombre||'Sistema') + '</div>' +
+      '<div class="c tk-sub">Ítems: ' + items.reduce((a,i)=>a+i.qty,0) + ' · Total: $' + Util.money(subtotalRonda,false) + '</div><hr>' +
+      items.map(i => {
+        const adiciones = i.adiciones||[];
+        const adTotal = adTotalItem(i);
+        return '<div class="tk-item"><div class="b tk-item-nm">' + i.qty + ' × ' + Util.esc(i.nombre) + '</div>' +
+          (i.carneNombre ? '<div class="tk-item-carne">&gt; ' + Util.esc(i.carneNombre.toUpperCase()) + '</div>' : '') +
+          (i.gramos ? '<div class="tk-item-porc">' + Util.cantIns(i.gramos*i.qty, DB.meat(i.carne)) + '</div>' : '') +
+          (i.nota ? '<div class="tk-item-nota">&gt;&gt; ' + Util.esc(i.nota.toUpperCase()) + '</div>' : '') +
+          (adiciones.length
+            ? '<div style="margin:2px 0 1px;font-size:10px;font-weight:700;letter-spacing:.06em">ADICIONES:</div>' +
+              adiciones.map(a =>
+                '<div class="tk-item-ad" style="display:table;width:100%">' +
+                  '<span style="display:table-cell">[+] ' + Util.esc(a.nombre.toUpperCase()) + '</span>' +
+                  (a.precio > 0
+                    ? '<span style="display:table-cell;text-align:right;font-weight:700">+ $' + Util.money(a.precio,false) + '</span>'
+                    : '<span style="display:table-cell;text-align:right;font-style:italic">sin cargo</span>') +
+                '</div>'
+              ).join('')
+            : '') +
+          '<div class="tk-item-p">$ ' + Util.money((i.precio + adTotal)*i.qty, false) +
+            (adTotal>0 ? '<br><span style="font-size:9px;font-weight:400">(incluye adiciones $'+Util.money(adTotal,false)+')</span>' : '') +
+          '</div>' +
+          '</div>';
+      }).join('') +
+      (o.nota ? '<hr><div class="tk-sub"><b>Nota:</b> ' + Util.esc(o.nota) + '</div>' : '') +
       (llevar && o.entrega && (o.entrega.direccion || o.entrega.telefono)
-        ? '<hr><div><b>Entrega:</b> ' + Util.esc(o.entrega.direccion || '') +
+        ? '<hr><div class="tk-sub"><b>Entrega:</b> ' + Util.esc(o.entrega.direccion||'') +
           (o.entrega.telefono ? '<br>Tel: ' + Util.esc(o.entrega.telefono) : '') + '</div>' : '') +
+      (llevar && o.domicilio ? '<div class="tk-sub"><b>Domicilio:</b> ' + Util.money(o.domicilio) + '</div>' : '') +
       '</div>';
-
-    UI.modal({
-      title:'Comanda \u00b7 ' + (llevar ? tipo.corto : 'mesa ' + o.mesa) +
-        (ronda > 1 ? ' \u00b7 ronda ' + ronda : (reimpresion ? ' \u00b7 reimpresi\u00f3n' : '')),
-      size:'sm',
-      body:'<div class="row no-print" style="gap:8px"><span class="eyebrow">Ancho de papel</span>' +
-        '<div class="chips right"><button class="chip" data-w="58">58 mm</button>' +
-        '<button class="chip" data-w="80">80 mm</button></div></div>' +
-        '<div class="ticket-frame" id="cf"></div>',
-      footer:'<button class="btn" data-close>Cerrar</button><button class="btn gold" id="kp">' +
-        Util.ico('print') + ' Imprimir</button>',
-      onMount(ov){
-        const paint = () => {
-          ov.querySelector('#cf').innerHTML = cuerpo();
-          ov.querySelectorAll('[data-w]').forEach(b => b.classList.toggle('on', b.dataset.w === ancho));
-        };
-        ov.querySelectorAll('[data-w]').forEach(b => b.onclick = () => { ancho = b.dataset.w; paint(); });
-        paint();
+    /* INTERVENCIÓN: en tablet/móvil, junto al botón Imprimir se agrega un
+       botón rojo en alto relieve "Editar Comanda" del mismo tamaño, para
+       el caso de que el cliente pida algo más o la mesera se haya
+       equivocado. Reutiliza la lógica ya existente de POS.loadOrder(id)
+       para regresar al pedido y poder adicionar o modificar los ítems.
+       CORRECCIÓN DE RAÍZ: al botón le faltaba la clase "btn" — por eso,
+       en la fila de acciones (que en móvil se apila a ancho completo),
+       este botón quedaba con otro tamaño/alineación y dejaba huecos que
+       se veían como líneas claras entre los botones, y el conjunto no
+       quedaba centrado. Se agrega class="btn" (sus estilos en línea, por
+       especificidad, siguen mandando en color/relieve) y el footer se
+       envuelve en un contenedor propio centrado, sin tocar la clase
+       global .modal-f que usan el resto de modales de la aplicación. */
+    const esMovil = UI.esTablet() || UI.esIOS();
+    const btnEditar = esMovil
+      ? '<button type="button" class="btn" id="kpEditar" style="' +
+          'display:inline-flex;align-items:center;justify-content:center;gap:7px;' +
+          'padding:9px 15px;border-radius:var(--r-sm);font-size:13px;' +
+          'background:linear-gradient(180deg,#E24B4B 0%,#C7302F 60%,#9C2222 100%);' +
+          'border:1px solid #E9827F;color:#fff;font-weight:600;cursor:pointer;' +
+          'box-shadow:0 3px 0 #7A1A1A,0 4px 10px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.22);' +
+          'text-shadow:0 1px 1px rgba(0,0,0,.35);transition:.12s;" ' +
+          'onmousedown="this.style.transform=\'translateY(2px)\';this.style.boxShadow=\'0 1px 0 #7A1A1A,0 2px 6px rgba(0,0,0,.25),inset 0 1px 0 rgba(255,255,255,.14)\'" ' +
+          'onmouseup="this.style.transform=\'\';this.style.boxShadow=\'0 3px 0 #7A1A1A,0 4px 10px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.22)\'" ' +
+          'onmouseleave="this.style.transform=\'\';this.style.boxShadow=\'0 3px 0 #7A1A1A,0 4px 10px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.22)\'">' +
+          Util.ico('edit') + ' Editar Comanda</button>'
+      : '';
+    UI.modal({title:'Comanda de cocina · mesa ' + o.mesa, size:'sm',
+      body:'<div class="ticket-frame">' + cuerpo + '</div>',
+      footer:'<div style="display:flex;gap:9px;justify-content:center;align-items:center;flex-wrap:wrap;width:100%">' +
+        '<button class="btn" data-close>Cerrar</button>' + btnEditar +
+        '<button class="btn gold" id="kp">' + Util.ico('print') + ' Imprimir</button>' +
+        '</div>',
+      onMount(ov, cls){
         ov.querySelector('#kp').onclick = () => {
-          DB.log('comanda:imprimir', o.numero + (ronda ? ' \u00b7 ronda ' + ronda : ' \u00b7 reimpresi\u00f3n completa'), o.id);
-          UI.imprimir(ov, ancho);
+          DB.log('comanda:imprimir', o.numero, o.id);
+          /* En tablet: al lanzar el diálogo de impresión, cerrar el modal
+             automáticamente y volver a la página de comandas para continuar
+             con el siguiente pedido sin pasos adicionales. */
+          const volver = UI.esTablet() || UI.esIOS()
+            ? () => { try{ cls(); }catch(e){} UI.closeAll(); Router.go('orders'); }
+            : null;
+          UI.imprimir(ov, volver);
+        };
+        const btnEd = ov.querySelector('#kpEditar');
+        if (btnEd) btnEd.onclick = () => {
+          DB.log('comanda:editar', o.numero, o.id);
+          try{ cls(); }catch(e){}
+          UI.closeAll();
+          /* CORRECCIÓN: "Editar Comanda" debe habilitar el pedido para
+             editar de verdad — antes solo dejaba la mesa/comanda
+             seleccionada pero el carrito quedaba vacío. Ahora se carga
+             el mismo mapeo de ítems que ya usa loadOrder(id, true) para
+             cobrar, reutilizando esa lógica tal cual (sin alterarla) para
+             que la mesera vea y edite lo ya pedido; al enviarlo de nuevo
+             a cocina se genera la nueva comanda con esos cambios. */
+          POS.loadOrder(o.id);
+          POS.cart = o.items.map(i => ({
+            lid:Util.uid('l'), pid:i.pid, nombre:i.nombre, precio:i.precio,
+            gramos:i.gramos, qty:i.qty, nota:i.nota||'',
+            adiciones:Array.isArray(i.adiciones)?i.adiciones.map(a=>Object.assign({},a)):[],
+            carne:i.carne, carneNombre:i.carneNombre||''
+          }));
+          POS.paint();
+          UI.toast('Comanda ' + o.numero + ' habilitada para editar.', 'info');
         };
       }});
   },
-
   /** Precuenta: lo que se lleva a la mesa antes de cobrar. No es factura. */
   precuenta(orderId){
     const o = DB.order(orderId); if (!o) return;
@@ -4640,14 +5828,18 @@ const Ticket = {
     const prop = Math.round(sub*(Number(c.propina)||0)/100);
     const dom = Number(o.domicilio)||0;
     const cuerpo = '<div class="ticket">' +
-      '<div class="c"><img src="' + (c.logo || Ticket.LOGO_PRINT) + '" style="max-width:50%;height:auto;margin-bottom:4px"></div>' +
+      (Ticket.logoImp() ? '<div class="c"><img src="' + Ticket.logoImp() +
+        '" style="max-width:50%;height:auto;margin-bottom:4px;background:#fff"></div>' : '') +
       '<div class="c b lg">' + Util.esc(c.empresa.toUpperCase()) + '</div>' +
       '<div class="c">' + (o.tipo && o.tipo !== 'mesa'
         ? Util.esc(POS.TIPOS[o.tipo].corto.toUpperCase()) : 'Mesa ' + Util.esc(o.mesa)) +
         ' · ' + Util.esc(o.numero) + '</div>' +
       '<div class="c b" style="margin-top:4px">PRECUENTA — NO ES FACTURA</div><hr>' +
-      '<table>' + o.items.map(i => '<tr><td>' + i.qty + ' ' + Util.esc(i.nombre) + '</td>' +
-        '<td class="r">' + Util.money(i.precio*i.qty, false) + '</td></tr>').join('') + '</table><hr>' +
+      '<table>' + o.items.map(i => {
+        const adP = (i.adiciones||[]).reduce((s,x)=>s+(Number(x.precio)||0),0);
+        return '<tr><td>' + i.qty + ' ' + Util.esc(i.nombre) + (adP>0?'+adic':'') + '</td>' +
+          '<td class="r">' + Util.money((Number(i.precio||0)+adP)*(Number(i.qty)||1), false) + '</td></tr>';
+      }).join('') + '</table><hr>' +
       '<table><tr><td>Subtotal</td><td class="r">' + Util.money(sub,false) + '</td></tr>' +
       (imp ? '<tr><td>' + Util.esc(c.impuestoNombre) + ' ' + c.impuesto + '%</td><td class="r">' + Util.money(imp,false) + '</td></tr>' : '') +
       (dom ? '<tr><td>Domicilio</td><td class="r">' + Util.money(dom,false) + '</td></tr>' : '') +
@@ -4685,7 +5877,7 @@ const Ticket = {
         paint();
         ov.querySelector('#tprintb').onclick = () => {
           DB.log('factura:impresa', v.numero, v.id);
-          UI.imprimir(ov, ancho);
+          UI.imprimir(ov);
         };
         const vd = ov.querySelector('#tvoid');
         if (vd) vd.onclick = async () => {
@@ -5236,7 +6428,7 @@ Views.menu = {
   },
   mount(){
     const q = document.getElementById('mq');
-    q.oninput = Util.debounce(e => { State.filters.menu.q = e.target.value; Router.render(); }, 220);
+    q.oninput = Util.debounce(() => { State.filters.menu.q = q.value; Router.render(); }, 220);
     document.querySelectorAll('[data-c]').forEach(b => b.onclick = () => { State.filters.menu.cat = b.dataset.c; Router.render(); });
     document.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => Views.menu.form(b.dataset.edit));
     document.querySelectorAll('[data-fixband]').forEach(b => b.onclick = () => {
@@ -5263,13 +6455,28 @@ Views.menu = {
   },
   form(id){
     const p = id ? DB.product(id) : null;
+    /** Genera el siguiente código interno secuencial basado en la categoría */
+    const siguienteCodigo = (catId) => {
+      const cat = DB.cat(catId);
+      /* Prefijo: primeras 3 letras del nombre de la categoría, sin tildes, en mayúscula */
+      const prefijo = cat ? Util.norm(cat.nombre).slice(0,3).toUpperCase() : 'PLT';
+      const regex = new RegExp('^' + prefijo + '-(\\d+)$', 'i');
+      let max = 0;
+      DB.prods().forEach(prod => {
+        const m = (prod.codigo || '').match(regex);
+        if (m) { const n = parseInt(m[1], 10); if (n > max) max = n; }
+      });
+      return prefijo + '-' + String(max + 1).padStart(3, '0');
+    };
+    const codigoInicial = p ? p.codigo : siguienteCodigo('c_ban');
     UI.formModal({
       title: p ? 'Editar ' + p.nombre : 'Nuevo plato', size:'lg', ok: p?'Guardar cambios':'Crear plato',
       groups:[
         {title:'Identificación', fields:[
           {k:'nombre', label:'Nombre', val:p?p.nombre:'', req:true},
-          {k:'codigo', label:'Código interno', val:p?p.codigo:'', req:true, ph:'CAR-007'},
-          {k:'cat', label:'Categoría', type:'select', val:p?p.cat:'c_car', opts:DB.cats().map(c=>({v:c.id,t:c.nombre}))},
+          {k:'codigo', label:'Código interno', val:codigoInicial, req:true, ph:'CAR-007',
+           hint:p ? '' : 'Generado automáticamente. Puedes modificarlo.'},
+          {k:'cat', label:'Categoría', type:'select', val:p?p.cat:'c_ban', opts:DB.cats().map(c=>({v:c.id,t:c.nombre}))},
           {k:'ico', label:'Dibujo del plato', type:'glifo', val:p?Glifo.para(p):'',
            hint:'Se propone solo según el nombre; tócalo si prefieres otro'}
         ]},
@@ -5295,9 +6502,20 @@ Views.menu = {
           {k:'gramos', label:'Cuánto descuenta', type:'number', val:p?(p.gramos||0):0, min:0,
            hint:'Casi siempre 1: una porción de carne o un envase. Déjalo en cero si no lleva inventario.'}
         ]},
+        {title:'Insumos adicionales del plato', fields:[
+          {k:'insumosExtra', label:'', type:'hidden',
+           val:p && p.insumosExtra ? JSON.stringify(p.insumosExtra) : '[]'}
+        ]},
         {title:'Detalle', fields:[
           {k:'desc', label:'Descripción para la carta', type:'textarea', val:p?p.desc:'', full:true},
           {k:'activo', label:'Visible en el punto de venta', type:'check', val:p?p.activo:true, full:true}
+        ]},
+        /* INTERVENCIÓN 4: Adiciones rápidas por defecto del plato.
+           Se guardan en p.adicionesDefault y se ofrecen como burbujas flotantes
+           al mesero cuando abre la nota del ítem en el carrito. */
+        {title:'Adiciones rápidas del plato', fields:[
+          {k:'adicionesDefault', label:'', type:'hidden',
+           val:p && p.adicionesDefault ? JSON.stringify(p.adicionesDefault) : '[]'}
         ]}
       ],
       onSave(d, close){
@@ -5339,6 +6557,12 @@ Views.menu = {
           if (!d.carne) d.gramos = 0;
         }
         d.porcionMigrada = true;
+        /* Parsear insumos extras */
+        try{ d.insumosExtra = JSON.parse(d.insumosExtra||'[]').filter(ie => ie.id); }catch(e){ d.insumosExtra = []; }
+        if (!Array.isArray(d.insumosExtra)) d.insumosExtra = [];
+        /* Parsear adiciones rápidas por defecto */
+        try{ d.adicionesDefault = JSON.parse(d.adicionesDefault||'[]'); }catch(e){ d.adicionesDefault = []; }
+        if (!Array.isArray(d.adicionesDefault)) d.adicionesDefault = [];
         const obj = Object.assign(p || {id:Util.uid('p')}, d, {carne:d.carne||null, act:Util.now()});
         if (!p) DB.d.products.push(obj);
         DB.touch('products','meats');
@@ -5347,6 +6571,153 @@ Views.menu = {
         close(); UI.toast(p?'Plato actualizado.':'Plato agregado a la carta.','ok'); Router.render();
       }
     });
+    /* FASE 3: Al crear un plato nuevo, actualizar el código cuando cambie la categoría */
+    if (!p){
+      setTimeout(() => {
+        const selCat = document.querySelector('#mform [name="cat"]');
+        const inpCod = document.querySelector('#mform [name="codigo"]');
+        if (selCat && inpCod){
+          let codigoEditadoManualmente = false;
+          inpCod.addEventListener('input', () => { codigoEditadoManualmente = true; });
+          selCat.addEventListener('change', () => {
+            if (!codigoEditadoManualmente){
+              inpCod.value = siguienteCodigo(selCat.value);
+            }
+          });
+        }
+        /* ── Insumos adicionales: UI dinámica ── */
+        const hiddenIE = document.querySelector('#mform [name="insumosExtra"]');
+        if (hiddenIE){
+          let extras = [];
+          try{ extras = JSON.parse(hiddenIE.value||'[]'); }catch(e){ extras = []; }
+          if (!Array.isArray(extras)) extras = [];
+          const allInsumos = DB.meats().map(m=>({v:m.id, t:(m.tipo==='bebida'?'Bebida':'Carne') + ' · ' + DB.rotulo(m)}));
+          const wrapper = document.createElement('div');
+          wrapper.id = 'ieWrap';
+          hiddenIE.parentElement.appendChild(wrapper);
+          const pintaIE = () => {
+            hiddenIE.value = JSON.stringify(extras);
+            wrapper.innerHTML =
+              '<p style="font-size:12.5px;color:var(--ash-dim);margin:0 0 8px">Si este plato lleva varios productos del inventario, agrégalos aquí. Cada uno se descontará al vender.</p>' +
+              extras.map((ie, i) =>
+                '<div class="row" style="margin-bottom:6px;gap:6px">' +
+                  '<select class="inp" data-ie-sel="' + i + '" style="flex:2">' +
+                    '<option value="">Seleccionar insumo…</option>' +
+                    allInsumos.map(o => '<option value="' + o.v + '"' + (o.v===ie.id?' selected':'') + '>' + Util.esc(o.t) + '</option>').join('') +
+                  '</select>' +
+                  '<input class="inp num" type="number" data-ie-qty="' + i + '" value="' + (ie.qty||1) + '" min="1" placeholder="Cant" style="flex:.6;text-align:center" title="Porciones a descontar">' +
+                  '<button class="btn sm ghost" data-ie-rm="' + i + '" style="color:var(--ash-dim)">×</button>' +
+                '</div>'
+              ).join('') +
+              '<button class="btn sm ghost" id="ieAdd" style="margin-top:4px">' + Util.ico('plus') + ' Agregar otro insumo</button>';
+            wrapper.querySelectorAll('[data-ie-sel]').forEach(s => s.onchange = () => {
+              extras[+s.dataset.ieSel].id = s.value;
+              const m = DB.meat(s.value);
+              extras[+s.dataset.ieSel].nombre = m ? m.nombre : '';
+              hiddenIE.value = JSON.stringify(extras);
+            });
+            wrapper.querySelectorAll('[data-ie-qty]').forEach(inp => inp.oninput = () => {
+              extras[+inp.dataset.ieQty].qty = Math.max(1, parseInt(inp.value,10)||1);
+              hiddenIE.value = JSON.stringify(extras);
+            });
+            wrapper.querySelectorAll('[data-ie-rm]').forEach(b => b.onclick = () => { extras.splice(+b.dataset.ieRm, 1); pintaIE(); });
+            const addBtn = wrapper.querySelector('#ieAdd');
+            if (addBtn) addBtn.onclick = () => { extras.push({id:'', qty:1, nombre:''}); pintaIE(); };
+          };
+          pintaIE();
+        }
+
+        /* ── Adiciones rápidas por defecto del plato ── */
+        const hiddenAD = document.querySelector('#mform [name="adicionesDefault"]');
+        if (hiddenAD){
+          let adDefs = [];
+          try{ adDefs = JSON.parse(hiddenAD.value||'[]'); }catch(e){ adDefs = []; }
+          if (!Array.isArray(adDefs)) adDefs = [];
+
+          /* Burbujas de adiciones comunes como acceso rápido */
+          const BURBUJAS_RAPIDAS = [
+            {nombre:'Aguacate', precio:2000}, {nombre:'Papas Fritas', precio:3000},
+            {nombre:'Patacón', precio:2500}, {nombre:'Huevo Frito', precio:1500},
+            {nombre:'Tajadas', precio:1500}, {nombre:'Ensalada Especial', precio:2000},
+            {nombre:'Arroz Extra', precio:1000}, {nombre:'Queso', precio:2000},
+            {nombre:'Crema de Leche', precio:1500}, {nombre:'Chorizo Extra', precio:4000},
+            {nombre:'Chicharrón', precio:3500}
+          ];
+
+          const wrapAD = document.createElement('div');
+          wrapAD.id = 'adDefWrap';
+          hiddenAD.parentElement.appendChild(wrapAD);
+
+          const pintaAD = () => {
+            hiddenAD.value = JSON.stringify(adDefs);
+            wrapAD.innerHTML =
+              '<p style="font-size:12.5px;color:var(--ash-dim);margin:0 0 8px">Estas adiciones aparecerán como burbujas flotantes en el módulo Vender al registrar una nota para este plato. El mesero puede seleccionarlas con un toque.</p>' +
+              /* Burbujas de acceso rápido */
+              '<div style="margin-bottom:10px"><span style="font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ash-dim)">Adiciones frecuentes</span>' +
+              '<div class="chips wrap" style="margin-top:5px">' +
+                BURBUJAS_RAPIDAS.map(b => {
+                  const yaEsta = adDefs.some(d => d.nombre.toLowerCase() === b.nombre.toLowerCase());
+                  return '<button type="button" class="chip' + (yaEsta?' on':'') + '" data-adburbuja="' +
+                    Util.esc(b.nombre) + '" data-adprecio="' + b.precio + '">' +
+                    Util.esc(b.nombre) + (yaEsta ? ' ✓' : ' + $' + b.precio.toLocaleString('es-CO')) +
+                    '</button>';
+                }).join('') +
+              '</div></div>' +
+              /* Lista actual */
+              (adDefs.length
+                ? '<div style="margin-bottom:8px">' +
+                  adDefs.map((d, i) =>
+                    '<div class="row" style="gap:6px;padding:5px 8px;background:var(--char-900);border:1px solid var(--line);border-radius:var(--r-sm);margin-bottom:4px">' +
+                      '<span style="flex:1;font-size:13px">' + Util.esc(d.nombre) + '</span>' +
+                      '<b class="num" style="font-size:13px">+ ' + Util.money(d.precio) + '</b>' +
+                      '<button type="button" class="btn sm ghost" data-adrm="' + i + '" style="color:var(--ash-dim);padding:2px 6px">✕</button>' +
+                    '</div>').join('') +
+                  '</div>'
+                : '<div class="dim" style="font-size:12px;padding:6px 0 10px">Sin adiciones rápidas aún.</div>') +
+              /* Formulario para agregar adición personalizada */
+              '<div class="row" style="gap:6px;margin-top:4px">' +
+                '<input class="inp" id="adDef-nom" placeholder="Nombre de la adición" style="flex:2">' +
+                '<input class="inp num" id="adDef-pre" type="number" min="0" placeholder="Precio" style="flex:1">' +
+                '<button type="button" class="btn sm gold" id="adDef-btn">+ Agregar</button>' +
+              '</div>';
+
+            /* Burbujas rápidas */
+            wrapAD.querySelectorAll('[data-adburbuja]').forEach(b => b.onclick = () => {
+              const nom = b.dataset.adburbuja;
+              const pre = Number(b.dataset.adprecio)||0;
+              const yaEsta = adDefs.some(d => d.nombre.toLowerCase() === nom.toLowerCase());
+              if (yaEsta){
+                adDefs = adDefs.filter(d => d.nombre.toLowerCase() !== nom.toLowerCase());
+              } else {
+                adDefs.push({nombre:nom, precio:pre});
+              }
+              pintaAD();
+            });
+
+            /* Quitar adición */
+            wrapAD.querySelectorAll('[data-adrm]').forEach(b => b.onclick = () => {
+              adDefs.splice(Number(b.dataset.adrm), 1); pintaAD();
+            });
+
+            /* Agregar personalizada */
+            const btnAD = wrapAD.querySelector('#adDef-btn');
+            if (btnAD) btnAD.onclick = () => {
+              const nom = (wrapAD.querySelector('#adDef-nom').value||'').trim();
+              const pre = Math.max(0, Number(wrapAD.querySelector('#adDef-pre').value)||0);
+              if (!nom) return UI.toast('Escribe el nombre de la adición.','warn');
+              if (!pre) return UI.toast('Indica el precio de la adición.','warn');
+              if (adDefs.some(d=>d.nombre.toLowerCase()===nom.toLowerCase()))
+                return UI.toast('Esa adición ya está en la lista.','warn');
+              adDefs.push({nombre:nom, precio:pre});
+              wrapAD.querySelector('#adDef-nom').value = '';
+              wrapAD.querySelector('#adDef-pre').value = '';
+              pintaAD();
+            };
+          };
+          pintaAD();
+        }
+      }, 60);
+    }
   },
   cats(){
     const paint = (ov) => {
@@ -5608,7 +6979,7 @@ Views.inv = {
 
     const f = this.filtros();
     const q = document.getElementById('invQ');
-    if (q) q.oninput = Util.debounce(e => { f.q = e.target.value; Router.render(); }, 200);
+    if (q) q.oninput = Util.debounce(() => { f.q = q.value; Router.render(); }, 200);
     document.querySelectorAll('[data-f]').forEach(b => b.onclick = () => { f.f = b.dataset.f; Router.render(); });
     document.querySelectorAll('[data-v]').forEach(b => b.onclick = () => { f.vista = b.dataset.v; Router.render(); });
   },
@@ -6194,6 +7565,9 @@ Views.comidas = {
 
     let sel = userId || null;
     let carne = null;
+    let cantidadHuevos = 1;
+    /** Detecta si un insumo es de tipo huevo por su nombre */
+    const esHuevo = (insumo) => insumo && /huevo/i.test(Util.norm(insumo.nombre || ''));
     const close = UI.modal({
       title:'Registrar comida del personal', size:'lg',
       body:'<div id="cmBody"></div>',
@@ -6210,7 +7584,7 @@ Views.comidas = {
               activos.map(u => {
                 const comio = DB.mealHoy(u.id);
                 return '<option value="' + u.id + '"' + (u.id===sel?' selected':'') + (comio?' disabled':'') + '>' +
-                  Util.esc(u.nombre) + ' · ' + Util.esc(u.cargo) + (comio ? ' — ya comió hoy' : '') + '</option>';
+                  Util.esc(u.nombre) + ' · ' + Util.esc(u.cargo) + (comio ? ' — ya comió (8h)' : '') + '</option>';
               }).join('') +
             '</select>' +
             (yaComio
@@ -6230,6 +7604,14 @@ Views.comidas = {
                     '<span class="dim">' + (falta ? 'agotada' : Util.cantIns(Math.max(0,disp), x.insumo)) + '</span>' +
                   '</button>';
                 }).join('') + '</div>' +
+                /* Selector de cantidad para Huevos (máx 2 porciones) */
+                '<div id="cmHuevosQty" class="hide" style="margin-top:10px;padding:10px 14px;border-radius:8px;background:rgba(198,168,103,.08)">' +
+                  '<div class="row" style="gap:10px;align-items:center">' +
+                    '<span style="font-size:13px;font-weight:600">Porciones de huevo:</span>' +
+                    '<button class="btn sm' + (cantidadHuevos===1?' gold':'') + '" data-hq="1">1</button>' +
+                    '<button class="btn sm' + (cantidadHuevos===2?' gold':'') + '" data-hq="2">2 (doble)</button>' +
+                  '</div>' +
+                '</div>' +
                 '<label class="f" style="margin-top:14px">Observación' +
                   '<input class="inp" id="cmNota" placeholder="Ej: sin ensalada, para llevar"></label>');
 
@@ -6238,6 +7620,24 @@ Views.comidas = {
           box.querySelectorAll('[data-c]').forEach(b => b.onclick = () => {
             carne = b.dataset.c;
             box.querySelectorAll('[data-c]').forEach(x => x.classList.toggle('on', x === b));
+            /* Mostrar/ocultar selector de cantidad para Huevos */
+            const selInsumo = disponibles.find(x => x.insumo.id === carne);
+            const qtyBox = box.querySelector('#cmHuevosQty');
+            if (qtyBox){
+              if (selInsumo && esHuevo(selInsumo.insumo)){
+                qtyBox.classList.remove('hide');
+                cantidadHuevos = 1;
+                qtyBox.querySelectorAll('[data-hq]').forEach(hb => hb.classList.toggle('gold', hb.dataset.hq === '1'));
+              } else {
+                qtyBox.classList.add('hide');
+                cantidadHuevos = 1;
+              }
+            }
+          });
+          /* Botones de cantidad de huevos */
+          box.querySelectorAll('[data-hq]').forEach(hb => hb.onclick = () => {
+            cantidadHuevos = parseInt(hb.dataset.hq, 10);
+            box.querySelectorAll('[data-hq]').forEach(x => x.classList.toggle('gold', x === hb));
           });
         };
         pinta();
@@ -6245,32 +7645,37 @@ Views.comidas = {
         ov.querySelector('#cmOk').onclick = () => {
           if (!sel) return UI.toast('Elige a la persona.','warn');
           if (DB.d.config.alimentacionUnaVez !== false && DB.mealHoy(sel))
-            return UI.toast('Esa persona ya comió hoy. Queda habilitada mañana.','warn', 4600);
+            return UI.toast('Esa persona ya comió en las últimas 8 horas. Queda habilitada cuando se cumplan.','warn', 4600);
           if (!carne) return UI.toast('Elige la carne.','warn');
           const nota = (box.querySelector('#cmNota')||{}).value || '';
-          const r = Views.comidas.guardar(sel, carne, nota);
+          const r = Views.comidas.guardar(sel, carne, nota, cantidadHuevos);
           if (r) close();
         };
       }
     });
   },
 
-  /** Escribe el registro y descuenta la porción del inventario. */
-  guardar(userId, meatId, nota){
+  /** Escribe el registro y descuenta la porción del inventario.
+      @param {number} porciones — cantidad a descontar (default 1, máx 2 para huevos) */
+  guardar(userId, meatId, nota, porciones){
     const u = DB.personal(true).find(x => x.id === userId);
     const m = DB.meat(meatId);
     if (!u || !m) return UI.toast('Faltan datos del registro.','bad'), false;
     if (DB.d.config.alimentacionUnaVez !== false && DB.mealHoy(userId))
-      return UI.toast('Esa persona ya comió hoy.','warn'), false;
-    if (DB.available(meatId) < 1)
-      return UI.toast('No queda ninguna porción de ' + m.nombre + '.','bad'), false;
+      return UI.toast('Esa persona ya comió en las últimas 8 horas.','warn'), false;
+    /* Determinar cantidad: solo Huevos puede ser 2, todo lo demás forzado a 1 */
+    const esHuevoItem = /huevo/i.test(Util.norm(m.nombre || ''));
+    const cant = esHuevoItem ? Math.min(2, Math.max(1, parseInt(porciones, 10) || 1)) : 1;
+    if (DB.available(meatId) < cant)
+      return UI.toast('No ' + (cant > 1 ? 'quedan ' + cant + ' porciones' : 'queda ninguna porción') + ' de ' + m.nombre + '.','bad'), false;
 
-    m.gramos = Math.max(0, m.gramos - 1);
+    m.gramos = Math.max(0, m.gramos - cant);
     m.act = Util.now();
     const reg = {
       id:Util.uid('cm'), fecha:Util.now(), userId:u.id, userNombre:u.nombre,
       rol:u.cargo, fuente:u.fuente,
-      meatId:m.id, carneNombre:DB.rotulo(m), porciones:1, costo:Math.round(m.costoGramo||0),
+      meatId:m.id, carneNombre:DB.rotulo(m) + (cant > 1 ? ' ×' + cant : ''),
+      porciones:cant, costo:Math.round((m.costoGramo||0) * cant),
       nota:String(nota||'').trim(), registroId:(Auth.user||{}).id, registroNombre:(Auth.user||{}).nombre||'',
       sede:DB.d.config.sedeId, act:Util.now()
     };
@@ -6280,7 +7685,7 @@ Views.comidas = {
       Util.money(reg.costo) + (reg.nota ? ' · ' + reg.nota : ''), reg.id);
     Sync.enqueue('meals','create', reg);
     Sync.enqueue('meats','update', m);
-    UI.toast(u.nombre.split(' ')[0] + ' registrado: ' + m.nombre + '. Queda bloqueado hasta mañana.','ok', 4600);
+    UI.toast(u.nombre.split(' ')[0] + ' registrado: ' + m.nombre + (cant > 1 ? ' ×' + cant + ' porciones' : '') + '. Queda bloqueado hasta mañana.','ok', 4600);
     Router.render();
     return true;
   },
@@ -6343,7 +7748,8 @@ Views.comidas = {
       '</table>';
 
     const cuerpo = '<div class="ticket ' + (w58?'w58':'') + '">' +
-      '<div class="c"><img src="' + (c.logo || Ticket.LOGO_PRINT) + '" style="max-width:55%;height:auto;margin-bottom:4px"></div>' +
+      (Ticket.logoImp() ? '<div class="c"><img src="' + Ticket.logoImp() +
+        '" style="max-width:55%;height:auto;margin-bottom:4px;background:#fff"></div>' : '') +
       '<div class="c b lg">' + Util.esc(c.empresa.toUpperCase()) + '</div>' +
       '<div class="c">NIT ' + Util.esc(c.nit) + '<br>' + Util.esc(c.dir) + '<br>' + Util.esc(c.tel) + '</div>' + line +
       '<div class="c b" style="font-size:13px;letter-spacing:.1em">REPORTE ALIMENTACIÓN</div>' +
@@ -6572,7 +7978,8 @@ const Clients = {
           ov.querySelectorAll('[data-pick]').forEach(b => b.onclick = () => { close(); cb(b.dataset.pick); });
         };
         paint('');
-        ov.querySelector('#cq').oninput = Util.debounce(e=>paint(e.target.value), 140);
+        const cqEl = ov.querySelector('#cq');
+        cqEl.oninput = Util.debounce(()=>paint(cqEl.value), 140);
         ov.querySelector('#cnew').onclick = () => { close(); Views.clients.form(null, cb); };
       }});
   }
@@ -6605,7 +8012,8 @@ Views.clients = {
         rows, {emptyTitle:'Sin clientes', emptyMsg:'Registra clientes para medir frecuencia y fidelidad.'}) + '</div>';
   },
   mount(){
-    document.getElementById('cq2').oninput = Util.debounce(e=>{ State.filters.cli.q = e.target.value; Router.render(); }, 220);
+    const cq2 = document.getElementById('cq2');
+    cq2.oninput = Util.debounce(() => { State.filters.cli.q = cq2.value; Router.render(); }, 220);
     document.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>this.form(b.dataset.edit));
     document.querySelectorAll('[data-hist]').forEach(b=>b.onclick=()=>this.history(b.dataset.hist));
     document.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>this.remove(b.dataset.del));
@@ -6845,7 +8253,14 @@ Views.gastos = {
   mount(){
     const btn = document.querySelector('[data-act=newgasto]');
     if (btn) btn.onclick = () => this.nuevo();
-    document.querySelectorAll('[data-gdel]').forEach(b => b.onclick = () => this.eliminar(b.dataset.gdel));
+    document.querySelectorAll('[data-gdel]').forEach(b => b.onclick = async () => {
+      if (!Auth.can('admin') && !Auth.can('menu')){
+        /* Cajero: requiere autorización de admin para eliminar */
+        const autorizo = await Auth.autorizar('Eliminar un gasto', 'Se requiere autorización de administrador');
+        if (!autorizo) return;
+      }
+      this.eliminar(b.dataset.gdel);
+    });
   },
   nuevo(){
     const c = DB.openCash();
@@ -6907,12 +8322,14 @@ Views.cash = {
   totals(c){
     const ventas = DB.paid().filter(s => s.fecha >= c.apertura && (!c.cierre || s.fecha <= c.cierre));
     const porMetodo = Metrics.byPayment(ventas);
-    const efectivoVentas = c.movs.filter(m=>m.tipo==='venta').reduce((a,m)=>a+m.monto,0);
+    const efectivoVentas = porMetodo['Efectivo']||0;
+    const transferencias = (porMetodo['Transferencia']||0) + (porMetodo['Nequi']||0) + (porMetodo['Daviplata']||0);
+    const total = ventas.reduce((a,s)=>a+s.total,0);
+    const otrosMedios = Math.max(0, total - efectivoVentas - transferencias);
     const ingresos = c.movs.filter(m=>m.tipo==='ingreso').reduce((a,m)=>a+m.monto,0);
     const egresos = c.movs.filter(m=>m.tipo==='egreso').reduce((a,m)=>a+m.monto,0);
-    const esperado = c.base + efectivoVentas + ingresos + egresos;
-    return {ventas, porMetodo, efectivoVentas, ingresos, egresos, esperado,
-      total:ventas.reduce((a,s)=>a+s.total,0)};
+    const esperado = c.base + total + ingresos + egresos;
+    return {ventas, porMetodo, efectivoVentas, transferencias, otrosMedios, ingresos, egresos, esperado, total};
   },
   html(){
     const c = DB.openCash();
@@ -6922,9 +8339,8 @@ Views.cash = {
       const t = this.totals(c);
       cur = '<div class="grid g-kpi" style="margin-bottom:14px">' +
           UI.kpi('Base inicial', Util.money(c.base), 'Abierta ' + Util.dt(c.apertura)) +
-          UI.kpi('Ventas del turno', Util.money(t.total), t.ventas.length + ' facturas') +
-          UI.kpi('Efectivo esperado', Util.money(t.esperado), 'Base + efectivo + movimientos') +
-          UI.kpi('Otros medios', Util.money(t.total - t.efectivoVentas), 'Tarjetas y transferencias') +
+          UI.kpi('Ventas del turno', Util.money(t.total), t.ventas.length + ' facturas · Ef: ' + Util.money(t.efectivoVentas) + ' · Tr: ' + Util.money(t.transferencias)) +
+          UI.kpi('Total esperado', Util.money(t.esperado), 'Base + ventas + mov.') +
         '</div>' +
         '<div class="grid g-2">' +
           '<div class="card pad0"><div class="card-h"><h3>Desglose por medio de pago</h3></div><div style="padding:16px">' +
@@ -7025,12 +8441,22 @@ Views.cash = {
     const t = this.totals(c);
     UI.formModal({title:'Arqueo y cierre de caja', ok:'Cerrar turno',
       extra:'<div class="card" style="margin-top:12px">' +
+        '<div class="eyebrow" style="margin-bottom:8px">Resumen de ventas del turno</div>' +
+        '<div class="tot-row"><span>Total facturado (' + t.ventas.length + ' facturas)</span><b>' + Util.money(t.total) + '</b></div>' +
+        '<div class="tot-row" style="padding-left:14px;font-size:13px;color:var(--ash)"><span>· Efectivo</span><b>' + Util.money(t.efectivoVentas) + '</b></div>' +
+        '<div class="tot-row" style="padding-left:14px;font-size:13px;color:var(--ash)"><span>· Transferencias (Nequi, Daviplata)</span><b>' + Util.money(t.transferencias) + '</b></div>' +
+        (t.otrosMedios ? '<div class="tot-row" style="padding-left:14px;font-size:13px;color:var(--ash)"><span>· Otros medios</span><b>' + Util.money(t.otrosMedios) + '</b></div>' : '') +
+        '<hr style="border-color:var(--line);margin:10px 0">' +
+        '<div class="eyebrow" style="margin-bottom:8px">Consolidado de caja</div>' +
         '<div class="tot-row"><span>Base inicial</span><b>' + Util.money(c.base) + '</b></div>' +
-        '<div class="tot-row"><span>Ventas en efectivo</span><b>' + Util.money(t.efectivoVentas) + '</b></div>' +
-        '<div class="tot-row"><span>Otros ingresos</span><b>' + Util.money(t.ingresos) + '</b></div>' +
+        '<div class="tot-row"><span>Ventas del turno</span><b>' + Util.money(t.total) + '</b></div>' +
+        '<div class="tot-row" style="padding-left:14px;font-size:13px;color:var(--ash)"><span>· Efectivo</span><b>' + Util.money(t.efectivoVentas) + '</b></div>' +
+        '<div class="tot-row" style="padding-left:14px;font-size:13px;color:var(--ash)"><span>· Transferencias</span><b>' + Util.money(t.transferencias) + '</b></div>' +
+        (t.otrosMedios ? '<div class="tot-row" style="padding-left:14px;font-size:13px;color:var(--ash)"><span>· Otros medios</span><b>' + Util.money(t.otrosMedios) + '</b></div>' : '') +
+        (t.ingresos ? '<div class="tot-row"><span>Otros ingresos</span><b>' + Util.money(t.ingresos) + '</b></div>' : '') +
         '<div class="tot-row"><span>Egresos</span><b>' + Util.money(t.egresos) + '</b></div>' +
-        '<div class="tot-grand"><span>Esperado en caja</span><b>' + Util.money(t.esperado) + '</b></div></div>',
-      fields:[{k:'contado', label:'Efectivo contado', type:'number', val:t.esperado, min:0, req:true, full:true},
+        '<div class="tot-grand"><span>Total esperado</span><b>' + Util.money(t.esperado) + '</b></div></div>',
+      fields:[{k:'contado', label:'Total contado (efectivo + transferencias)', type:'number', val:t.esperado, min:0, req:true, full:true},
               {k:'nota', label:'Observación del cierre', type:'textarea', val:'', full:true}],
       onSave(d, close){
         c.estado = 'cerrada'; c.cierre = Util.now(); c.esperado = t.esperado; c.contado = d.contado;
@@ -7156,12 +8582,29 @@ const Reports = {
         .sort((a,b) => a.fecha < b.fecha ? 1 : -1); }},
     caja:{t:'Caja', cols:[
       {k:'apertura',t:'Apertura',f:'dt'},{k:'cierre',t:'Cierre',f:'dt'},{k:'responsable',t:'Responsable'},
-      {k:'base',t:'Base',n:1,f:'$'},{k:'esperado',t:'Esperado',n:1,f:'$'},{k:'contado',t:'Contado',n:1,f:'$'},
+      {k:'base',t:'Base',n:1,f:'$'},{k:'totalVentas',t:'Total ventas',n:1,f:'$'},
+      {k:'efectivo',t:'Efectivo',n:1,f:'$'},{k:'transferencia',t:'Transferencia',n:1,f:'$'},
+      {k:'otrosMedios',t:'Otros medios',n:1,f:'$'},
+      {k:'ingresos',t:'Ingresos',n:1,f:'$'},{k:'egresos',t:'Egresos',n:1,f:'$'},
+      {k:'esperado',t:'Esperado',n:1,f:'$'},{k:'contado',t:'Contado',n:1,f:'$'},
       {k:'diferencia',t:'Diferencia',n:1,f:'$'}],
       build(v, from, to){ return DB.d.cash.filter(c=>c.apertura.slice(0,10)>=from && c.apertura.slice(0,10)<=to)
-        .map(c=>({apertura:c.apertura, cierre:c.cierre, responsable:(DB.user(c.userId)||{}).nombre||'—',
-          base:c.base, esperado:c.esperado||0, contado:c.contado||0, diferencia:(c.contado||0)-(c.esperado||0)}))
-        .sort((a,b)=>a.apertura<b.apertura?1:-1); }},
+        .map(c=>{
+          const ventas = DB.paid().filter(s => s.fecha >= c.apertura && (!c.cierre || s.fecha <= c.cierre));
+          const porMetodo = {};
+          ventas.forEach(s => (s.pagos||[]).forEach(p => { porMetodo[p.metodo] = (porMetodo[p.metodo]||0) + p.monto; }));
+          const totalVentas = ventas.reduce((a,s)=>a+s.total,0);
+          const efVentas = porMetodo['Efectivo']||0;
+          const transf = (porMetodo['Transferencia']||0) + (porMetodo['Nequi']||0) + (porMetodo['Daviplata']||0);
+          const otrosMedios = totalVentas - efVentas - transf;
+          const ingresos = c.movs.filter(m=>m.tipo==='ingreso').reduce((a,m)=>a+m.monto,0);
+          const egresos = c.movs.filter(m=>m.tipo==='egreso').reduce((a,m)=>a+m.monto,0);
+          const esperadoCalc = c.estado==='cerrada' ? (c.esperado||0) : (c.base + totalVentas + ingresos + egresos);
+          return {apertura:c.apertura, cierre:c.cierre, responsable:(DB.user(c.userId)||{}).nombre||'—',
+            base:c.base, totalVentas, efectivo:efVentas, transferencia:transf, otrosMedios:Math.max(0,otrosMedios),
+            ingresos, egresos, esperado:esperadoCalc, contado:c.contado||0,
+            diferencia:(c.contado||0)-(esperadoCalc)};
+        }).sort((a,b)=>a.apertura<b.apertura?1:-1); }},
     alimentacion:{t:'Alimentación', cols:[
       {k:'fecha',t:'Fecha',f:'dt'},{k:'persona',t:'Persona'},{k:'rol',t:'Rol'},
       {k:'carne',t:'Carne'},{k:'nota',t:'Observación'},{k:'registro',t:'Registró'},
@@ -7225,41 +8668,136 @@ const Reports = {
     return out;
   },
 
-  /** Genera ticket térmico para reportes de Gastos y Domiciliarios */
+  /** Genera ticket térmico para reportes — optimizado para impresora térmica 58/80 mm.
+      Espacio compacto, totales destacados al final de cada sección. */
   ticketTermico(){
     const {f, def, data} = this.current();
     const c = DB.d.config;
     const w58 = c.ticket === '58';
-    const line = '<hr>';
-    const tipo = f.tipo; // 'gastos' o 'domiciliarios'
+    /* Separador compacto: línea punteada sin márgenes exagerados */
+    const line = '<hr style="margin:2px 0">';
+    const sep  = '<tr><td colspan="2" style="border-bottom:1px dotted #aaa;padding:1px 0"></td></tr>';
+    const tipo = f.tipo;
     let filas = '';
-    let total = 0;
+    /* Acumuladores para totales por sección */
+    let totalPrincipal = 0;
+    let totalSecundario = 0;
+    let labelSecundario = '';
+
     if (tipo === 'gastos'){
       filas = data.map(g => {
-        total += (g.valor||0);
-        return '<tr><td colspan="2" style="font-size:10px;color:#555">' + Util.dt(g.fecha) + '</td></tr>' +
-          '<tr><td>' + Util.esc(g.concepto) + '</td><td class="r">' + Util.money(g.valor||0,false) + '</td></tr>' +
-          '<tr><td colspan="2" style="font-size:10px;color:#555">' + Util.esc(g.responsable||'—') + ' · ' + Util.esc(g.metodo||'Efectivo') + '</td></tr>';
-      }).join('<tr><td colspan="2" style="border-bottom:1px dotted #999"></td></tr>');
-    } else {
+        totalPrincipal += (g.valor||0);
+        return '<tr><td style="font-size:9px;line-height:1.1">' + Util.dt(g.fecha) +
+          (g.responsable ? ' · ' + Util.esc(g.responsable) : '') +
+          (g.metodo && g.metodo !== 'Efectivo' ? ' · ' + Util.esc(g.metodo) : '') + '</td>' +
+          '<td class="r b" style="white-space:nowrap">' + Util.money(g.valor||0,false) + '</td></tr>' +
+          '<tr><td colspan="2" style="font-size:10px;padding-bottom:2px">' + Util.esc(g.concepto) + '</td></tr>';
+      }).join(sep);
+    } else if (tipo === 'domiciliarios'){
+      labelSecundario = 'Domicilios';
       filas = data.map(d => {
-        total += (d.facturado||0);
-        return '<tr><td class="b">' + Util.esc(d.nombre) + '</td><td class="r">' + Util.money(d.facturado||0,false) + '</td></tr>' +
-          '<tr><td>Pedidos: ' + (d.pedidos||0) + '</td><td class="r">Dom: ' + Util.money(d.domicilios||0,false) + '</td></tr>' +
-          '<tr><td colspan="2" style="font-size:10px;color:#555">' + Util.esc(d.estado||'—') + (d.telefono && d.telefono!=='—' ? ' · ' + Util.esc(d.telefono) : '') + '</td></tr>';
-      }).join('<tr><td colspan="2" style="border-bottom:1px dotted #999"></td></tr>');
+        totalPrincipal  += (d.facturado||0);
+        totalSecundario += (d.domicilios||0);
+        return '<tr><td class="b" style="padding-top:2px">' + Util.esc(d.nombre) + '</td>' +
+          '<td class="r b" style="white-space:nowrap">' + Util.money(d.facturado||0,false) + '</td></tr>' +
+          '<tr><td style="font-size:9px">Pedidos: ' + (d.pedidos||0) +
+            (d.telefono && d.telefono!=='—' ? ' · ' + Util.esc(d.telefono) : '') + '</td>' +
+          '<td class="r" style="font-size:9px">Dom: ' + Util.money(d.domicilios||0,false) + '</td></tr>';
+      }).join(sep);
+    } else {
+      /* INTERVENCIÓN: en reportes con muchas columnas (ventas, caja, utilidad,
+         productos, etc.) mostrarlas todas en una sola fila angosta de 80mm
+         las comprimía hasta cortarlas — la impresión quedaba incompleta.
+         Ahora cada registro se imprime en formato tarjeta: una línea con la
+         descripción principal + el valor total del registro (destacados y
+         sin truncar), y debajo el resto de columnas en texto que se ajusta
+         (wrap) a lo ancho del papel en vez de recortarse. */
+      const tt = Reports.totales(def, data);
+      const colDesc = def.cols.find(col => !col.n) || def.cols[0];
+      /* Prioridad de nombres típicos de "total" por registro, para que el
+         valor destacado sea siempre el más representativo del reporte
+         (ej.: en Caja resalta el total de ventas, no la diferencia;
+         en Clientes resalta el total gastado, no el ticket medio). Si
+         ninguno de estos nombres existe, se usa la última columna en
+         dinero como respaldo. */
+      const PRIORIDAD_TOTAL = ['total','totalVentas','facturado','gastado','monto','utilidad','costo','valor'];
+      let colTotal = null;
+      for (const key of PRIORIDAD_TOTAL){
+        const found = def.cols.find(col => col.k === key);
+        if (found){ colTotal = found; break; }
+      }
+      if (!colTotal) colTotal = def.cols.slice().reverse().find(col => col.f === '$') || null;
+      const colsResto = def.cols.filter(col => col !== colDesc && col !== colTotal);
+      filas = data.map(r => {
+        const detalle = colsResto
+          .map(col => Util.esc(col.t) + ': ' + Util.esc(Reports.fmt(r[col.k], col.f)))
+          .join(' · ');
+        return '<tr><td colspan="2">' +
+          '<div style="display:table;width:100%">' +
+            '<span style="display:table-cell;font-weight:700;font-size:10.5px">' +
+              Util.esc(Reports.fmt(r[colDesc.k], colDesc.f)) + '</span>' +
+            (colTotal ? '<span style="display:table-cell;text-align:right;font-weight:700;' +
+              'font-size:11px;white-space:nowrap;padding-left:6px">' +
+              Util.esc(Reports.fmt(r[colTotal.k], colTotal.f)) + '</span>' : '') +
+          '</div>' +
+          (detalle ? '<div style="font-size:9px;line-height:1.35;color:#333;margin-top:1px">' +
+            detalle + '</div>' : '') +
+        '</td></tr>';
+      }).join(sep);
+      /* Construir bloque de totales genérico: uno por cada columna sumable,
+         con el total principal (colTotal) destacado más grande. */
+      if (tt){
+        const filaTotal = Object.keys(tt).map(k => {
+          const col = def.cols.find(cc => cc.k === k);
+          const esPrincipal = col && col === colTotal;
+          return '<tr' + (esPrincipal ? ' style="border-top:1px solid #000"' : '') + '>' +
+            '<td style="' + (esPrincipal ? 'font-weight:700;font-size:11px' : 'font-size:9.5px') +
+              ';padding:' + (esPrincipal?'2px 0':'1px 0') + '">' +
+              (esPrincipal ? 'TOTAL — ' : '') + Util.esc(col ? col.t : k) + '</td>' +
+            '<td class="r" style="' + (esPrincipal ? 'font-weight:700;font-size:13px' : 'font-weight:700;font-size:9.5px') +
+              ';white-space:nowrap">' + Util.esc(Reports.fmt(tt[k], col ? col.f : '$')) + '</td></tr>';
+        }).join('');
+        const cuerpoGen = '<div class="ticket ' + (w58?'w58':'') + '">' +
+          (Ticket.logoImp() ? '<div class="c"><img src="' + Ticket.logoImp() +
+            '" style="max-width:50%;height:auto;margin-bottom:3px;background:#fff"></div>' : '') +
+          '<div class="c b" style="font-size:12px;letter-spacing:.06em">' + Util.esc(c.empresa.toUpperCase()) + '</div>' +
+          '<div class="c" style="font-size:9px">NIT ' + Util.esc(c.nit) + ' · ' + Util.esc(c.tel) + '</div>' + line +
+          '<div class="c b" style="font-size:11px;letter-spacing:.06em">REPORTE DE ' + def.t.toUpperCase() + '</div>' +
+          '<div class="c" style="font-size:9px">' + Util.date(f.from) + ' — ' + Util.date(f.to) + '</div>' +
+          '<div class="c" style="font-size:8px">' + Util.dt(Util.now()) + ' · ' + Util.esc((Auth.user||{}).nombre||'') + '</div>' + line +
+          '<table style="width:100%">' + filas + '</table>' + line +
+          '<table style="width:100%">' + filaTotal + '</table>' + line +
+          '<div class="c" style="font-size:8px">' + data.length + ' registros · ' + Util.esc(c.sede) + '</div></div>';
+        return UI.modal({title:'Ticket · ' + def.t, size:'sm',
+          body:'<div class="ticket-frame">' + cuerpoGen + '</div>',
+          footer:'<button class="btn" data-close>Cerrar</button><button class="btn gold" id="rpTk">' + Util.ico('print') + ' Imprimir</button>',
+          onMount(ov){ ov.querySelector('#rpTk').onclick = () => { DB.log('reporte:ticket', def.t); UI.imprimir(ov); }; }});
+      }
     }
+
+    /* Pie de totales: siempre al final, tipografía destacada */
+    const pieTotales =
+      '<table style="width:100%">' +
+        (totalSecundario > 0
+          ? '<tr><td>' + Util.esc(labelSecundario||'Subtotal') + '</td>' +
+              '<td class="r b" style="white-space:nowrap">' + Util.money(totalSecundario,false) + '</td></tr>'
+          : '') +
+        '<tr><td class="b" style="font-size:12px;letter-spacing:.04em">TOTAL</td>' +
+          '<td class="r b" style="font-size:14px;white-space:nowrap">' + Util.money(totalPrincipal,false) + '</td></tr>' +
+        '<tr><td colspan="2" style="font-size:9px">' + data.length + ' registros</td></tr>' +
+      '</table>';
+
     const cuerpo = '<div class="ticket ' + (w58?'w58':'') + '">' +
-      '<div class="c"><img src="' + (c.logo || Ticket.LOGO_PRINT) + '" style="max-width:55%;height:auto;margin-bottom:4px"></div>' +
-      '<div class="c b lg">' + Util.esc(c.empresa.toUpperCase()) + '</div>' +
-      '<div class="c">NIT ' + Util.esc(c.nit) + '<br>' + Util.esc(c.dir) + '<br>' + Util.esc(c.tel) + '</div>' + line +
-      '<div class="c b" style="font-size:13px;letter-spacing:.1em">REPORTE DE ' + def.t.toUpperCase() + '</div>' +
-      '<div class="c" style="font-size:10px">' + Util.date(f.from) + ' a ' + Util.date(f.to) + '</div>' +
-      '<div class="c" style="font-size:9px">' + Util.dt(Util.now()) + ' · ' + Util.esc((Auth.user||{}).nombre||'') + '</div>' + line +
-      '<table>' + filas + '</table>' + line +
-      '<table><tr><td class="b lg">TOTAL</td><td class="r b lg">' + Util.money(total,false) + '</td></tr>' +
-      '<tr><td colspan="2" style="font-size:10px">' + data.length + ' registros</td></tr></table>' + line +
-      '<div class="c" style="font-size:9px">' + Util.esc(c.sede) + '</div>' +
+      (Ticket.logoImp() ? '<div class="c"><img src="' + Ticket.logoImp() +
+        '" style="max-width:50%;height:auto;margin-bottom:3px;background:#fff"></div>' : '') +
+      '<div class="c b" style="font-size:12px;letter-spacing:.06em">' + Util.esc(c.empresa.toUpperCase()) + '</div>' +
+      '<div class="c" style="font-size:9px">NIT ' + Util.esc(c.nit) + ' · ' + Util.esc(c.tel) + '</div>' + line +
+      '<div class="c b" style="font-size:11px;letter-spacing:.06em">REPORTE DE ' + def.t.toUpperCase() + '</div>' +
+      '<div class="c" style="font-size:9px">' + Util.date(f.from) + ' — ' + Util.date(f.to) + '</div>' +
+      '<div class="c" style="font-size:8px">' + Util.dt(Util.now()) + ' · ' + Util.esc((Auth.user||{}).nombre||'') + '</div>' + line +
+      '<table style="width:100%">' + filas + '</table>' + line +
+      pieTotales + line +
+      '<div class="c" style="font-size:8px">' + Util.esc(c.sede) + '</div>' +
     '</div>';
     UI.modal({title:'Ticket · ' + def.t, size:'sm',
       body:'<div class="ticket-frame">' + cuerpo + '</div>',
@@ -7269,8 +8807,13 @@ const Reports = {
 
   pdf(){
     const {f, def, data} = this.current();
-    /* Gastos y Domiciliarios usan formato de ticket térmico */
-    if (f.tipo === 'gastos' || f.tipo === 'domiciliarios') return this.ticketTermico();
+    /* INTERVENCIÓN: todas las secciones del Módulo Reportes imprimen ahora en
+       formato térmico ajustado a 80mm (o 58mm según configuración), con los
+       totales respectivos de cada selección — igual que gastos/domiciliarios.
+       El bloque "hoja" (A4/carta) queda debajo sin usarse, sin eliminarlo,
+       por si se necesita restaurar el modo hoja en el futuro. */
+    return this.ticketTermico();
+    // eslint-disable-next-line no-unreachable
     const c = DB.d.config;
     UI.modal({title:'Vista previa · ' + def.t, size:'lg',
       body:'<div style="background:#fff;color:#111;padding:22px;border-radius:8px" id="pdfdoc">' +
@@ -7572,7 +9115,8 @@ Views.audit = {
         {emptyTitle:'Sin registros', emptyMsg:'Las acciones del equipo se registran automáticamente.'}) + '</div>';
   },
   mount(){
-    document.getElementById('aq').oninput = Util.debounce(e=>{ State.filters.aud.q = e.target.value; Router.render(); }, 220);
+    const aq = document.getElementById('aq');
+    aq.oninput = Util.debounce(() => { State.filters.aud.q = aq.value; Router.render(); }, 220);
     document.querySelector('[data-x]').onclick = () => Reports.csv('auditoria', DB.d.audit.map(a=>({
       fecha:a.fecha, usuario:a.usuario, rol:a.rol, accion:a.accion, detalle:a.detalle})));
   }
@@ -7598,6 +9142,9 @@ Views.cfg = {
           {k:'nombreEquipo', label:'Nombre de este equipo', val:c.nombreEquipo,
            ph:'Caja principal, Tablet 1, Cocina', hint:'Solo para identificarlo entre los demás aparatos'},
           {k:'sedeId', label:'Código de sede', val:c.sedeId, hint:'Identifica el origen de cada venta al sincronizar'},
+          {k:'logoTicket', label:'Imprimir el logotipo en tickets y facturas', type:'check',
+           val:DB.d.config.logoTicket !== false, full:true,
+           hint:'Se imprime en blanco y negro. Apágalo si tu logo no queda bien en papel'},
           {k:'logo', label:'Logotipo del negocio', type:'image', full:true,
            hint:'Aparece en la pantalla de acceso y en el ticket. PNG con fondo transparente queda mejor'}
         ]) +
@@ -7687,6 +9234,7 @@ Views.cfg = {
         else c[el.name] = el.value.trim();
       });
       DB.touch('config'); DB.log('config:guardar','Parámetros del sistema actualizados');
+      Ticket.prepararLogo();      // el logotipo pudo cambiar
       Sync.enqueue('config','update', Object.assign({id:'config'}, c));
       Respaldo.iniciar();
       UI.toast('Configuración guardada.','ok'); Router.render();
@@ -7858,6 +9406,7 @@ const Boot = {
   async start(){
     await Persist.init();
     const virgen = await DB.load();
+    Ticket.prepararLogo();          // deja el logotipo listo para papel
     this.pwa();
     this.net();
     this.keys();
