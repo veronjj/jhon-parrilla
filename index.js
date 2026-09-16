@@ -33,6 +33,8 @@ const express = require('express');
 const compression = require('compression');
 const mysql = require('mysql2/promise');
 
+const fs = require('fs');
+
 const gzip = promisify(zlib.gzip);
 const gunzip = promisify(zlib.gunzip);
 
@@ -64,10 +66,26 @@ function revisarURL(url) {
   const cuerpo = url.slice(8);
   if (!cuerpo.includes('@')) return { causa: 'La cadena no trae usuario ni contraseña.',
     arreglo: 'Debe verse así: mysql://usuario:clave@host:puerto/basededatos' };
-  const clave = cuerpo.slice(0, cuerpo.lastIndexOf('@')).split(':').slice(1).join(':');
+  const cred = cuerpo.slice(0, cuerpo.lastIndexOf('@'));
+  const usuario = cred.split(':')[0];
+  const clave = cred.split(':').slice(1).join(':');
+  const trasArroba = cuerpo.slice(cuerpo.lastIndexOf('@') + 1);
+  const host = trasArroba.split('?')[0].split('/')[0].split(':')[0];
+
+  // El error más fácil de cometer: rellenar a mano un ejemplo en vez de copiar
+  // la cadena del panel, y meter la contraseña donde va el nombre del servidor.
+  if (/AVNS_/i.test(host)) return {
+    causa: 'La contraseña quedó metida dentro del nombre del servidor.',
+    arreglo: 'El host lleva un trozo que empieza por AVNS_, que es una contraseña de Aiven, no parte de la dirección. No armes la cadena a mano: en Aiven, Overview, Connection information, cambia el desplegable a "Service URI" y copia esa cadena entera en MYSQL_URL.' };
+  if (/xxx+|<|tu-|ejemplo/i.test(host)) return {
+    causa: 'El nombre del servidor todavía tiene texto de ejemplo.',
+    arreglo: 'Copia la cadena real desde Aiven: Overview, Connection information, formato "Service URI".' };
+  if (!usuario) return { causa: 'Falta el usuario.',
+    arreglo: 'Va justo después de mysql:// y antes de los dos puntos. En Aiven suele ser avnadmin.' };
+  if (!clave) return { causa: 'Falta la contraseña.',
+    arreglo: 'Va entre los dos puntos y la arroba. Cópiala del panel, no la escribas de memoria.' };
   if (/[@:/?#[\]]/.test(clave)) return { causa: 'La contraseña trae símbolos que parten la cadena.',
     arreglo: 'Los signos @ : / ? # [ ] hay que codificarlos. Lo más simple es regenerar la contraseña en el panel del proveedor.' };
-  const trasArroba = cuerpo.slice(cuerpo.lastIndexOf('@') + 1);
   const ruta = trasArroba.split('?')[0];
   if (!ruta.includes('/') || !ruta.split('/')[1]) return { causa: 'La cadena no dice a qué base de datos entrar.',
     arreglo: 'Después del puerto va una barra y el nombre de la base. En Aiven suele llamarse defaultdb.' };
@@ -218,7 +236,8 @@ const leerDatos = fila => {
    ------------------------------------------------------------------- */
 async function aplicarOps(ops, sede) {
   const propios = new Set();
-  if (!Array.isArray(ops) || !ops.length) return propios;
+  const nada = { propios, cursor: null };   // misma forma en todas las salidas
+  if (!Array.isArray(ops) || !ops.length) return nada;
 
   const porClave = new Map();
   for (const op of ops) {
@@ -233,7 +252,7 @@ async function aplicarOps(ops, sede) {
     if (!previo || v.act >= previo.act) porClave.set(v.clave, v);
   }
   const lista = Array.from(porClave.values());
-  if (!lista.length) return propios;
+  if (!lista.length) return nada;   // p.ej. solo llegó la bitácora, que no viaja
 
   const [previos] = await pool.query(
     'SELECT clave, act FROM registros WHERE clave IN (?)', [lista.map(v => v.clave)]);
@@ -278,14 +297,75 @@ async function aplicarOps(ops, sede) {
         [ahora, ...args, obsoletas.map(o => o.clave)]);
     }
   } finally { liberar(base, lista.length); }
-  return propios;
+  // El número más alto que acaba de entrar: es lo que se difunde para que
+  // las demás tablets sepan si les falta algo.
+  return { propios, cursor: base + lista.length - 1 };
 }
 
 /* ── App ────────────────────────────────────────────────────────────────── */
 const app = express();
 app.set('trust proxy', 1);
-app.use(compression());
+// El canal de avisos queda fuera de la compresión: comprimir un flujo abierto
+// lo deja en un búfer y los avisos no salen hasta que se llena.
+app.use(compression({ filter: (req, res) => req.path !== '/eventos' && compression.filter(req, res) }));
 app.use(express.json({ limit: '40mb' }));
+
+/* ── Avisos en vivo ─────────────────────────────────────────────────────
+   Cada tablet mantiene abierta una conexión a /eventos. Cuando alguien
+   escribe, el servidor manda el número del último cambio y quien no lo
+   tenga pide las novedades. Antes cada aparato preguntaba cada cinco
+   segundos: la comanda tardaba hasta cinco segundos en aparecer en cocina
+   y el servidor recibía doce peticiones por minuto y por aparato aunque no
+   pasara nada.
+
+   Va con Server-Sent Events y no con websockets porque el tráfico solo
+   necesita ir en un sentido: el servidor dice "hay algo nuevo" y las
+   escrituras siguen su camino normal por POST. Es una ruta HTTP corriente,
+   atraviesa cualquier proxy, y el navegador reconecta solo sin librería.
+   ------------------------------------------------------------------- */
+/* Versión del HTML que este servidor entrega. Se lee una vez al arrancar y se
+   publica en /salud, para poder comparar de un vistazo qué tiene el servidor
+   y qué tiene cada tablet: es la diferencia entre "no subí el archivo" y
+   "la tablet quedó con la copia vieja", que se arreglan de forma distinta. */
+let APP_VERSION = 'desconocida';
+try {
+  const html = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
+  const m = html.match(/<meta\s+name="app-version"\s+content="([^"]+)"/i);
+  if (m) APP_VERSION = m[1];
+} catch (e) { /* si no está el archivo, /salud lo dirá */ }
+
+const oyentes = new Set();
+
+function avisar(cursor) {
+  if (!oyentes.size) return;
+  const linea = 'data: ' + JSON.stringify({ cursor }) + '\n\n';
+  for (const o of oyentes) {
+    try { o.write(linea); } catch (e) { oyentes.delete(o); }
+  }
+}
+
+app.get('/eventos', (req, res) => {
+  res.set({
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no',          // que ningún proxy intermedio lo retenga
+    'Access-Control-Allow-Origin': '*'
+  });
+  res.flushHeaders();
+  res.write('retry: 3000\n\n');         // si se cae, el navegador vuelve en 3 s
+  res.write('event: hola\ndata: {"ok":true}\n\n');
+  oyentes.add(res);
+  req.on('close', () => oyentes.delete(res));
+});
+
+// Latido: sin tráfico, un proxy cierra la conexión por inactividad y la
+// tablet se queda sorda sin enterarse.
+setInterval(() => {
+  for (const o of oyentes) {
+    try { o.write(': latido\n\n'); } catch (e) { oyentes.delete(o); }
+  }
+}, 25000).unref();
 
 app.use((req, res, next) => {
   res.set('Access-Control-Allow-Origin', '*');
@@ -321,7 +401,9 @@ app.get(['/salud', '/health'], guardia(async (req, res) => {
   const cuerpo = {
     ok: listo, servicio: 'jhon-parrilla-pos', version: VERSION,
     db: listo ? 'conectada' : 'sin conexión', motor: 'mysql', registros,
-    esEsteEquipo: false, hora: new Date().toISOString()
+    esEsteEquipo: false, hora: new Date().toISOString(),
+    appVersion: APP_VERSION,      // versión del HTML que sirve este servidor
+    enVivo: oyentes.size          // aparatos con el canal de avisos abierto
   };
   // Cuánto tarda la base en contestar: sirve para saber si la lentitud está
   // en la base o en el servidor web.
@@ -336,7 +418,8 @@ app.get(['/salud', '/health'], guardia(async (req, res) => {
 app.post('/sync', exigirDB, guardia(async (req, res) => {
   const { sede, cursor, ops } = req.body || {};
   const lote = Array.isArray(ops) ? ops : [];
-  const propios = lote.length ? await aplicarOps(lote, sede) : new Set();
+  const escrito = lote.length ? await aplicarOps(lote, sede) : null;
+  const propios = escrito ? escrito.propios : new Set();
 
   const desde = Number(cursor) || 0;
   const tope = techo();
@@ -360,6 +443,10 @@ app.post('/sync', exigirDB, guardia(async (req, res) => {
     cambios,
     faltan: filas.length === 500
   });
+
+  // Se avisa después de responder, para no hacer esperar a quien escribió.
+  // Quien mandó el cambio ya tiene ese número y se ignora a sí mismo.
+  if (escrito && escrito.cursor !== null) avisar(escrito.cursor);
 }));
 
 /* ── GET /estado ────────────────────────────────────────────────────── */
@@ -432,6 +519,7 @@ app.post('/sembrar', exigirDB, guardia(async (req, res) => {
 
   console.log('[sembrar]', filas.length, 'registros publicados');
   res.json({ ok: true, registros: filas.length, cursor: base + filas.length - 1 });
+  avisar(base + filas.length - 1);
 }));
 
 /* ── Respaldos ──────────────────────────────────────────────────────────
