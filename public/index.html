@@ -8,6 +8,9 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Jhon Parrilla">
+<!-- Se sube cada vez que se publica un cambio. El servidor la lee y la expone
+     en /salud, para comparar de un vistazo qué versión tiene cada tablet. -->
+<meta name="app-version" content="2026.09.12">
 <title>Jhon Parrilla · POS</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230C0B0A'/><path d='M7 20h18M7 24h18' stroke='%23A3231C' stroke-width='2.4' stroke-linecap='round'/><path d='M11 8c0 3-3 3-3 6h16c0-3-3-3-3-6' stroke='%23C8A24A' stroke-width='2' fill='none' stroke-linecap='round'/></svg>">
 <style>
@@ -456,6 +459,13 @@ td.n,th.n{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-
 .modal{width:100%;max-width:520px;max-height:90vh;max-height:90dvh;display:flex;flex-direction:column;background:var(--char-850);
   border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--sh-3);animation:pop .22s var(--ease);overflow:hidden}
 .modal.lg{max-width:800px} .modal.sm{max-width:400px}
+/* INTERVENCIÓN: +20% de tamaño (letras, iconos/imágenes, opciones y
+   demás) SOLO en el modal de "Nota · Indicaciones para cocina" de la
+   sección Pedido, tanto en Vender como en Domicilios — para que a
+   meseras y cajeras les sea más fácil de leer y tocar. Se aplica con
+   "zoom" únicamente sobre este modal (clase nota-xl), sin tocar el
+   resto de modales ni módulos de la aplicación. */
+.modal.nota-xl{zoom:1.2;max-width:480px}
 @keyframes pop{from{opacity:0;transform:translateY(14px) scale(.98)}}
 .modal-h{display:flex;align-items:center;gap:10px;padding:15px 18px;border-bottom:1px solid var(--line-soft)}
 .modal-h h3{font-family:var(--serif);font-size:17px}
@@ -499,6 +509,10 @@ td.n,th.n{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-
 .ticket .tk-item-nota{font-size:12px;font-weight:700}
 .ticket .tk-item-ad{font-size:12px;font-weight:700;color:#333;width:100%}
 .ticket .tk-item-porc{font-size:10px}
+/* INTERVENCIÓN: total general de la comanda, alineado a la derecha */
+.ticket .tk-total-row{display:flex;justify-content:flex-end;align-items:baseline;gap:8px;margin-top:4px}
+.ticket .tk-total-lbl{font-size:12px;font-weight:700;letter-spacing:.06em}
+.ticket .tk-total-val{font-size:20px;font-weight:800;color:#111}
 .ticket .tk-llevar{font-size:17px;letter-spacing:.1em;border:2px solid #111;padding:2px 0;margin:3px 0}
 
 /* ── Gráficos ────────────────────────────────────────────────────────── */
@@ -798,6 +812,9 @@ tr.fila-total td{border-top:1.5px solid var(--brass-dim);font-weight:700;color:v
   .ticket .tk-item-nota{font-size:10px}
   .ticket .tk-item-ad{font-size:10px;color:#000}
   .ticket .tk-item-porc{font-size:9px}
+  .ticket .tk-total-row{display:flex;justify-content:flex-end;align-items:baseline;gap:8px;margin-top:3px}
+  .ticket .tk-total-lbl{font-size:11px;font-weight:700}
+  .ticket .tk-total-val{font-size:18px;font-weight:800;color:#000}
   .ticket .tk-llevar{font-size:14px;padding:1px 0;margin:2px 0;border-color:#000}
   tr,.tk-item,.c{break-inside:avoid;page-break-inside:avoid;orphans:2;widows:2}
   .no-print{display:none !important}
@@ -1509,7 +1526,12 @@ const DB = {
   d:{},
   BUCKETS:{
     core:['config','users','categories','products','meats','staff'],
-    tx:  ['sales','orders','purchases','cash','meals'],
+    /* INTERVENCIÓN (corrección de raíz): 'gastos' y 'domiciliarios' no
+       estaban registrados en ningún bucket, por lo que el guardado
+       permanente (saveBucket/saveAll) nunca los escribía — quedaban
+       solo en memoria y se perdían al recargar. Se agregan al bucket
+       transaccional para que persistan igual que ventas/comandas/caja. */
+    tx:  ['sales','orders','purchases','cash','meals','domTurnos','gastos','domiciliarios'],
     crm: ['clients'],
     ops: ['audit','queue']
   },
@@ -1604,7 +1626,7 @@ const DB = {
         prefijo:'JP', consecutivo:1, resolucion:'',
         ticket:'80', pieTicket:'\u00a1Gracias por preferirnos!',
         sede:'Sede Principal', sedeId:'S01',
-        endpoint:'', autoSync:true, bloqueoMin:15, pollSeg:5, alertaCocina:20, claveInventario:true,
+        endpoint:'', autoSync:true, bloqueoMin:15, alertaCocina:20, claveInventario:true,
         nombreEquipo:'', comandaSeq:0, minutosClave:10, respaldoMin:5,
         domicilioActivo:true, domicilioValor:3000, domicilioOpciones:'1000,2000,3000,4000,5000',
         domicilioMin:1000, domicilioMax:5000,
@@ -1622,7 +1644,11 @@ const DB = {
         {id:'cl_1', nombre:'Consumidor final', doc:'222222222222', tel:'', email:'', notas:'Cliente gen\u00e9rico del sistema',
          puntos:0, gastado:0, visitas:0, ultima:null, sistema:true, act:Util.now()}
       ],
-      staff:[], sales:[], orders:[], purchases:[], cash:[], gastos:[], domiciliarios:[], meals:[], audit:[], queue:[]
+      staff:[], sales:[], orders:[], purchases:[], cash:[], gastos:[], domiciliarios:[], meals:[], audit:[], queue:[],
+      /* INTERVENCIÓN: turnos de encargadas del módulo Domicilios (apertura
+         y cierre), independientes de la caja general — varias encargadas
+         pueden tener cada una su propio turno abierto a la vez. */
+      domTurnos:[]
     };
   },
 
@@ -1645,6 +1671,24 @@ const DB = {
       migrados++;
     });
     if (migrados) this.touch('meats');
+    /* INTERVENCIÓN: al instalar esta actualización, 'gastos',
+       'domiciliarios' y 'domTurnos' pasan a guardarse de forma
+       permanente (antes 'gastos' y 'domiciliarios' no estaban en
+       ningún bucket y se perdían al recargar). Esta migración corre
+       una sola vez (queda marcada en config) y fuerza un guardado
+       completo inmediato, para que cualquier información que hubiera
+       quedado represada solo en memoria de la sesión abierta al
+       momento de actualizar —cuentas, cierres, aperturas, registros—
+       quede escrita de una vez en el guardado permanente y no se
+       pierda. */
+    if (!this.d.config.migTxV2){
+      this.d.gastos = this.d.gastos || [];
+      this.d.domiciliarios = this.d.domiciliarios || [];
+      this.d.domTurnos = this.d.domTurnos || [];
+      this.d.config.migTxV2 = true;
+      this.touch('config','gastos','domiciliarios','domTurnos');
+      await this.saveAll();
+    }
     this.aPorciones();
     this.asegurarAcceso();
     /* Respaldar PINs en clave aparte: si al actualizar el archivo los usuarios
@@ -1765,6 +1809,10 @@ const DB = {
   user(id){ return this.byId('users').get(id); },
   cat(id){ return this.byId('categories').get(id); },
   openCash(){ return this.d.cash.find(c=>c.estado==='abierta'); },
+  /** INTERVENCIÓN: turno de una encargada del módulo Domicilios. A
+      diferencia de la caja (una sola, compartida), aquí cada persona
+      puede tener su propio turno abierto al mismo tiempo. */
+  openDomTurno(userId){ return (this.d.domTurnos||[]).find(t => t.userId === userId && t.estado === 'abierta'); },
   _pag:null,
   paid(){
     if (this._pag && this._pag.v === this._v) return this._pag.l;
@@ -1938,8 +1986,11 @@ DB._flush = Util.debounce(async function(){
    Toda operación es un upsert idempotente: reenviarla no duplica nada.
    Conflictos: gana la escritura con `act` más reciente.
    ------------------------------------------------------------------- */
+const APP_VERSION = '2026.09.12';
+
 const Sync = {
   running:false, lastAt:null, lastError:null, cursor:null, _poll:null, _fallos:0,
+  enVivo:false, _es:null,
 
   activo(){ return !!(DB.d.config.endpoint||'').trim(); },
 
@@ -1965,13 +2016,14 @@ const Sync = {
   },
   /** Si la página vino de un servidor válido, se configura sola. */
   async autoconfigurar(){
-    if (this.activo()) return null;
     const o = this.origen();
     if (!o) return null;
     const info = await this.probar(o, 3500);
     if (!info) return null;
-    DB.d.config.endpoint = o;
-    DB.touch('config');
+    // Se reescribe siempre: un aparato que venía apuntando a una IP del local
+    // se endereza solo con abrir la dirección nueva.
+    if (DB.d.config.endpoint !== o){ DB.d.config.endpoint = o; DB.touch('config'); }
+    this.escuchar();
     this.startPolling();
     return info;
   },
@@ -2115,14 +2167,51 @@ const Sync = {
   },
 
   /** Consulta periódica: es lo que hace que la comanda aparezca en cocina. */
+  /** Canal de avisos del servidor. Esto es lo que hace que la comanda salte
+      en cocina al instante: en vez de preguntar cada pocos segundos, el
+      aparato se queda escuchando y el servidor le avisa cuando hay algo.
+      Si se corta, el navegador reconecta solo. */
+  escuchar(){
+    if (this._es){ try{ this._es.close(); }catch(e){} this._es = null; }
+    this.enVivo = false;
+    if (!this.activo() || typeof EventSource === 'undefined') return;
+    let es;
+    try{ es = new EventSource(this.url('/eventos')); }catch(e){ return; }
+    this._es = es;
+    es.onopen = () => {
+      this.enVivo = true; UI.refreshStatus();
+      if (State.view === 'sync') Router.render();
+      this.run(true);          // por si pasó algo mientras estaba desconectado
+    };
+    es.onmessage = ev => {
+      let d = null;
+      try{ d = JSON.parse(ev.data); }catch(e){ return; }
+      // Quien acaba de escribir ya tiene ese número: no se pregunta a sí mismo.
+      if (d && d.cursor != null && Number(d.cursor) <= Number(this.cursor||0)) return;
+      this.run(true);
+    };
+    es.onerror = () => {
+      this.enVivo = false; UI.refreshStatus();
+      if (State.view === 'sync') Router.render();
+    };
+  },
+
+  /** Red de seguridad, no el mecanismo principal. Con el canal en pie solo se
+      consulta si está caído, si hay cola esperando, o una vez por minuto para
+      no quedarse callado del todo. */
   startPolling(){
     clearInterval(this._poll);
-    const seg = Math.max(2, Number(DB.d.config.pollSeg)||5);
+    /* Al iniciar —por ejemplo justo después de instalar una actualización— se
+       sincroniza de inmediato en vez de esperar, para que lo que haya en la
+       cola no quede represado. */
+    if (Auth.user && this.activo() && navigator.onLine && DB.d.config.autoSync) this.run(true);
     this._poll = setInterval(() => {
       if (!Auth.user || !this.activo() || !navigator.onLine || !DB.d.config.autoSync) return;
       if (document.hidden && State.view !== 'kds') return;
+      const callado = !this.lastAt || (Date.now() - new Date(this.lastAt).getTime()) > 60000;
+      if (this.enVivo && !callado && !DB.d.queue.length) return;
       this.run(true);
-    }, seg*1000);
+    }, 20000);
   }
 };
 
@@ -2566,6 +2655,7 @@ const Sesion = {
 
     document.getElementById('gate').classList.add('hide');
     document.getElementById('app').classList.remove('hide');
+    Sync.escuchar();
     Sync.startPolling();
     Respaldo.iniciar();
     Router.render();
@@ -3253,6 +3343,7 @@ const Gate = {
     document.onkeydown = null;
     if (this._shimmerTimer){ clearInterval(this._shimmerTimer); this._shimmerTimer = null; }
     document.getElementById('app').classList.remove('hide');
+    Sync.escuchar();
     Sync.startPolling();
     Router.go(Auth.can('dash') ? 'dash' : (Auth.can('pos') ? 'pos' : 'kds'));
     UI.toast('Bienvenido, ' + Auth.user.nombre.split(' ')[0] + '.','ok');
@@ -3309,7 +3400,6 @@ const Equipo = {
     const dir = (DB.d.config.endpoint||'').replace(/^https?:\/\//,'');
     if (!Sync.activo()) return {dot:'off', txt:(nombre ? nombre + ' · ' : '') + 'Equipo independiente'};
     if (!info) return {dot:'off', txt:(nombre ? nombre + ' · ' : '') + 'Sin conexión con ' + dir};
-    if (info.esEsteEquipo) return {dot:'on', txt:'Este equipo es el servidor · ' + dir};
     return {dot:'on', txt:(nombre ? nombre + ' · ' : 'Equipo conectado · ') + 'servidor ' + dir};
   },
   async pintar(){
@@ -4096,9 +4186,26 @@ const POS = {
       '<div id="adiciones-list" style="margin-top:6px;border:1px solid var(--line);border-radius:var(--r);overflow:hidden"></div>';
 
     const close = UI.modal({
-      title: 'Nota · ' + it.nombre, size:'sm',
+      title: 'Nota · ' + it.nombre, size:'sm nota-xl',
       body: bodyHTML,
       footer: '<button type="button" class="btn" data-close>Cancelar</button>' +
+              /* INTERVENCIÓN: botón "Guardar y Nuevo Pedido" — naranja, en
+                 alto relieve, mismo tamaño y estilo de botón que "Guardar y
+                 enviar a cocina" (misma clase base .btn, solo cambia el
+                 color). Va primero; guarda la nota/adiciones del plato
+                 actual (misma lógica de ejecutarGuardar) y de inmediato
+                 redirige a la mesera al módulo Vender, sección de platos
+                 con la categoría "Todo", para continuar con un nuevo plato. */
+              '<button type="button" class="btn" id="nota-nuevo-pedido" style="' +
+                'background:linear-gradient(180deg,#FF9A3D 0%,#FB7B1E 55%,#E35F05 100%);' +
+                'border:1px solid #E35F05;color:#fff;font-weight:800;' +
+                'box-shadow:0 3px 0 #B8460A,0 4px 10px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.22);' +
+                'text-shadow:0 1px 1px rgba(0,0,0,.35);transition:.12s" ' +
+                'onmousedown="this.style.transform=\'translateY(2px)\';this.style.boxShadow=\'0 1px 0 #B8460A,0 2px 6px rgba(0,0,0,.25),inset 0 1px 0 rgba(255,255,255,.14)\'" ' +
+                'onmouseup="this.style.transform=\'\';this.style.boxShadow=\'0 3px 0 #B8460A,0 4px 10px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.22)\'" ' +
+                'onmouseleave="this.style.transform=\'\';this.style.boxShadow=\'0 3px 0 #B8460A,0 4px 10px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.22)\'" ' +
+                'title="Guarda este plato y de inmediato lleva al módulo Vender para continuar con un nuevo plato">' +
+                Util.ico('plus') + ' Guardar y Nuevo Pedido</button>' +
               (POS.cart.length && Auth.can('comandas')
                 ? '<button type="button" class="btn pri" id="nota-enviar" title="Guarda y manda la comanda a cocina">' +
                   Util.ico('fire') + ' Guardar y enviar a cocina</button>'
@@ -4280,6 +4387,21 @@ const POS = {
         const btnSave = ov.querySelector('#nota-save'); if (btnSave) btnSave.addEventListener('click', () => ejecutarGuardar(false));
         const directo = ov.querySelector('#nota-enviar');
         if (directo) directo.addEventListener('click', () => ejecutarGuardar(true));
+
+        /* INTERVENCIÓN (corrección): "Guardar y Nuevo Pedido" — primero
+           GARANTIZA el guardado del pedido actual (reutiliza exactamente
+           ejecutarGuardar(false), la misma lógica probada del botón
+           Guardar). Luego, para asegurar la salida total con un solo
+           clic —incluida esta nota y cualquier otro modal que pudiera
+           quedar abierto (p. ej. el de mesa/pedido)— se fuerza el cierre
+           de todos los modales con UI.closeAll() antes de redirigir de
+           forma automática al módulo Vender para escoger un nuevo plato. */
+        const btnNuevoPedido = ov.querySelector('#nota-nuevo-pedido');
+        if (btnNuevoPedido) btnNuevoPedido.addEventListener('click', () => {
+          ejecutarGuardar(false);
+          UI.closeAll();
+          POS.nuevoPedido();
+        });
       }
     });
   },
@@ -4743,12 +4865,14 @@ const POS = {
     setTimeout(()=>Ticket.comanda(id, ronda), 350);
   },
   /** INTERVENCIÓN (corrección): "Nuevo Pedido" — botón naranja de la
-      sección Pedido. Se redirige su función: en vez de enviar a cocina,
-      simplemente abre/muestra la sección de platos con la categoría
-      "Todo" seleccionada, para que la mesera pueda seguir escogiendo
-      platos de un vistazo (útil cuando en la mesa hay varios clientes).
-      No toca el carrito ni envía nada a cocina. */
+      sección Pedido / Nota. Se redirige su función: en vez de enviar a
+      cocina, redirige automáticamente al módulo Vender y muestra la
+      sección de platos con la categoría "Todo" seleccionada, para que
+      la mesera pueda continuar con un nuevo plato de un vistazo (útil
+      cuando en la mesa hay varios clientes). No toca el carrito ni
+      envía nada a cocina. */
   nuevoPedido(){
+    if (State.view !== 'pos') Router.go('pos');
     this.cat = 'all';
     document.querySelectorAll('[data-cat]').forEach(x => x.classList.toggle('on', x.dataset.cat === 'all'));
     this.paintGrid();
@@ -4953,29 +5077,48 @@ Views.pos = {html:()=>POS.html(), mount:()=>POS.mount(), actions:()=>POS.actions
 
 /* ==========================================================================
    MÓDULO DOMICILIOS — Gestión completa de pedidos a domicilio
-   Flujo: Nuevo → Datos cliente → Selección platos → Enviar cocina → Imprimir
+   Flujo: Nuevo → Datos cliente → Selección platos → Enviar cocina → Cobrar
    ========================================================================== */
 const Domicilios = {
   /* Estado del formulario activo en memoria */
   _borrador: null,
 
   _nuevoBorrador(){
-    return { nombre:'', contacto:'', direccion:'', telefono:'', items:[], nota:'', _id:null };
+    return { nombre:'', contacto:'', direccion:'', telefono:'', items:[], nota:'', _id:null, domicilioValor:null };
   },
 
   borrador(){ return this._borrador || (this._borrador = this._nuevoBorrador()); },
 
+  /* CORRECCIÓN DE RAÍZ — facturas/pedidos duplicados y valores que
+     "cambian solos": _borrador es UN SOLO objeto en memoria compartido
+     por todo el módulo. Antes solo se limpiaba si el operario pulsaba
+     "Imprimir" o "Nuevo pedido" en el tiquete final; si cerraba esa
+     ventana de cualquier otra forma (la "X", clic afuera, o si volvía a
+     pulsar "Nuevo domicilio" sin pasar por ahí), el formulario reabría
+     ESE MISMO borrador —con el id, cliente y platos del pedido recién
+     guardado— y al guardar de nuevo se sobrescribía esa factura con
+     datos de otro cliente, o quedaban platos de un pedido anterior
+     sumados al nuevo. Ahora resetBorrador() se dispara automáticamente:
+     1) apenas se guarda con éxito (ver "Enviar a Cocina"/"Cobrar"),
+     2) al cerrar el formulario sin guardar (Cancelar, "X" o clic afuera).
+     Así el próximo pedido siempre arranca limpio. */
   resetBorrador(){ this._borrador = null; },
 
   /* Calcula totales del borrador actual */
-  calcBorrador(items){
+  calcBorrador(items, domicilioOverride){
     const c = DB.d.config;
     const subtotal = items.reduce((a,i)=>{
       const adP = (i.adiciones||[]).reduce((s,x)=>s+(Number(x.precio)||0),0);
       return a + (Number(i.precio||0) + adP) * (Number(i.qty)||1);
     }, 0);
     const impuesto = c.impuestoIncluido ? 0 : Math.round(subtotal*(Number(c.impuesto)||0)/100);
-    const domVal = Number(c.domicilioValor)||0;
+    /* INTERVENCIÓN: si el pedido tiene un valor de domicilio elegido con
+       los botones rápidos ($1.000 a $10.000), ese valor manda sobre la
+       tarifa general configurada, y se suma igual en el resumen, la
+       comanda y la factura (todos parten de este mismo cálculo). */
+    const domVal = (domicilioOverride!=null && domicilioOverride!=='')
+      ? Number(domicilioOverride)||0
+      : Number(c.domicilioValor)||0;
     return { subtotal, impuesto, domicilio: domVal, total: subtotal + impuesto + domVal };
   },
 
@@ -4984,6 +5127,27 @@ const Domicilios = {
     const hoy = Util.today();
     return (DB.d.sales||[]).filter(s => s.tipo === 'domicilio' && (s.fecha||'').slice(0,10) === hoy)
       .slice().reverse();
+  },
+
+  /* INTERVENCIÓN: turnos de las encargadas de Domicilios (apertura y
+     cierre), con la misma lógica de cálculo que usa el módulo Caja
+     (Metrics.byPayment sobre las ventas del rango). Se agregan
+     "ingresos" (lo facturado) y "egresos" (gastos reales registrados
+     por esa encargada durante el turno, tomados de DB.d.gastos — la
+     misma fuente ya corregida que usa Caja), para que el resumen de un
+     cierre de Domicilios tenga la misma estructura que el de Caja:
+     facturas, efectivo, transferencia, ingresos y egresos. */
+  turnoTotals(t){
+    const ventas = DB.paid().filter(s => s.tipo === 'domicilio' && s.userId === t.userId &&
+      s.fecha >= t.apertura && (!t.cierre || s.fecha <= t.cierre));
+    const porMetodo = Metrics.byPayment(ventas);
+    const efectivo = porMetodo['Efectivo'] || 0;
+    const transferencia = (porMetodo['Transferencia']||0) + (porMetodo['Nequi']||0) + (porMetodo['Daviplata']||0);
+    const total = ventas.reduce((a,s)=>a+(s.total||0), 0);
+    const otros = Math.max(0, total - efectivo - transferencia);
+    const egresos = (DB.d.gastos||[]).filter(g => g.userId === t.userId &&
+      g.fecha >= t.apertura && (!t.cierre || g.fecha <= t.cierre)).reduce((a,g)=>a+(Number(g.valor)||0), 0);
+    return { ventas, cantidad: ventas.length, efectivo, transferencia, otros, total, ingresos: total, egresos };
   }
 };
 
@@ -5003,19 +5167,100 @@ Views.domicilios = {
       return '<span class="badge warn">En cocina</span>';
     };
 
+    /* INTERVENCIÓN: "Turno de Domicilios" — apertura/cierre de turno por
+       encargada (cada una la suya, tomada de sus propias credenciales),
+       con la misma lógica de cálculo que Caja pero solo con lo pedido:
+       cantidad de domicilios, efectivo, transferencia y total. Incluye
+       historial de cierres con filtro por fecha y por empleada, y
+       resumen imprimible en 80&nbsp;mm, igual que en Caja. */
+    const miUserId = (Auth.user||{}).id;
+    const miTurno = miUserId ? DB.openDomTurno(miUserId) : null;
+    const turnoHTML = (() => {
+      if (!miUserId) return '';
+      if (!miTurno){
+        return '<div class="card pad0" style="margin-bottom:14px"><div class="card-h" style="justify-content:space-between">' +
+          '<h3>Turno de domicilios</h3>' +
+          '<button class="btn gold" id="dt-abrir">' + Util.ico('clock') + ' Abrir turno</button>' +
+          '</div></div>';
+      }
+      const tt = Domicilios.turnoTotals(miTurno);
+      return '<div class="card pad0" style="margin-bottom:14px">' +
+        '<div class="card-h" style="justify-content:space-between;flex-wrap:wrap;gap:8px">' +
+          '<h3>Turno de domicilios <span class="dim" style="font-weight:400;font-size:12px">· ' +
+            Util.esc((DB.user(miUserId)||{}).nombre||'—') + ' · abierto ' + Util.dt(miTurno.apertura) + '</span></h3>' +
+          '<div class="row" style="gap:8px">' +
+            '<button class="btn gold" id="dt-resumen">' + Util.ico('print') + ' Resumen de Turno</button>' +
+            '<button class="btn" id="dt-cerrar">' + Util.ico('lock') + ' Cerrar turno</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="grid g-kpi" style="padding:14px 16px 16px">' +
+          UI.kpi('Domicilios del turno', String(tt.cantidad), 'facturados por ' + Util.esc((DB.user(miUserId)||{}).nombre||'—')) +
+          UI.kpi('Efectivo', Util.money(tt.efectivo), 'cobrado en efectivo') +
+          UI.kpi('Transferencias', Util.money(tt.transferencia), 'Nequi, Daviplata, transferencia') +
+          UI.kpi('Total del turno', Util.money(tt.total), 'suma de domicilios cobrados') +
+        '</div>' +
+      '</div>';
+    })();
+
+    /* INTERVENCIÓN: la búsqueda e impresión de resúmenes de turnos ya
+       CERRADOS queda reservada solo para administración — el resto del
+       personal solo ve y gestiona su propio turno abierto (arriba). */
+    const esAdmin = Auth.can('admin');
+    const cerradosTurnos = (DB.d.domTurnos||[]).filter(x=>x.estado==='cerrada');
+    const filtroT = this._filtroTurnos || (this._filtroTurnos = {fecha:'', userId:''});
+    const filtroTActivo = !!(filtroT.fecha || filtroT.userId);
+    const histTurnos = filtroTActivo
+      ? cerradosTurnos.filter(x =>
+          (!filtroT.fecha || (x.cierre||x.apertura||'').slice(0,10) === filtroT.fecha) &&
+          (!filtroT.userId || x.userId === filtroT.userId)
+        ).slice().reverse()
+      : cerradosTurnos.slice(-12).reverse();
+    const empleadasTurnos = Array.from(new Set(cerradosTurnos.map(x=>x.userId))).map(id=>DB.user(id)).filter(Boolean);
+    const cierresHTML = !esAdmin ? '' : '<div class="card pad0" style="margin-bottom:14px">' +
+      '<div class="card-h" style="justify-content:space-between;flex-wrap:wrap;gap:8px">' +
+        '<h3>Cierres de turno — Domicilios <span class="dim" style="font-weight:400;font-size:11px">· solo administración</span></h3>' +
+        '<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">' +
+          '<input class="inp" type="date" id="dtf-fecha" value="' + Util.esc(filtroT.fecha) + '" style="max-width:150px" title="Filtrar por fecha de cierre">' +
+          '<select class="inp" id="dtf-user" style="max-width:180px" title="Filtrar por empleada">' +
+            '<option value="">Todas las encargadas</option>' +
+            empleadasTurnos.map(u=>'<option value="'+u.id+'"'+(filtroT.userId===u.id?' selected':'')+'>'+Util.esc(u.nombre)+'</option>').join('') +
+          '</select>' +
+          (filtroTActivo ? '<button class="btn sm ghost" id="dtf-limpiar">Limpiar filtro</button>' : '') +
+        '</div>' +
+      '</div>' +
+      (filtroTActivo ? '<div class="dim" style="padding:8px 16px 0;font-size:12px">' + histTurnos.length + ' turno(s) encontrado(s)</div>' : '') +
+      UI.table([{t:'Encargada'},{t:'Apertura'},{t:'Cierre'},{t:'Facturas',n:1},{t:'Efectivo',n:1},{t:'Transferencia',n:1},
+                {t:'Ingresos',n:1},{t:'Egresos',n:1},{t:'Total',n:1},{t:'',n:1}],
+        histTurnos.map(x => {
+          const tt = Domicilios.turnoTotals(x);
+          return '<tr><td>' + Util.esc((DB.user(x.userId)||{}).nombre||'—') + '</td>' +
+            '<td>' + Util.dt(x.apertura) + '</td><td>' + Util.dt(x.cierre) + '</td>' +
+            '<td class="n">' + tt.cantidad + '</td>' +
+            '<td class="n">' + Util.money(tt.efectivo) + '</td>' +
+            '<td class="n">' + Util.money(tt.transferencia) + '</td>' +
+            '<td class="n">' + Util.money(tt.ingresos) + '</td>' +
+            '<td class="n">' + Util.money(tt.egresos) + '</td>' +
+            '<td class="n"><b>' + Util.money(tt.total) + '</b></td>' +
+            '<td class="n"><button class="btn sm ghost" data-turno-resumen="' + x.id + '" title="Imprimir resumen de este turno (solo administración)">' + Util.ico('print') + '</button></td></tr>';
+        }), {emptyTitle: filtroTActivo ? 'Sin turnos para ese filtro' : 'Sin cierres de turno registrados',
+             emptyMsg: filtroTActivo ? 'Prueba con otra fecha o encargada.' : 'El historial de turnos de domicilios aparecerá aquí.'}) +
+    '</div>';
+
     return '<div class="view-head"><div>' +
         '<div class="eyebrow">Pedidos a domicilio de hoy · ' + Util.today() + '</div>' +
         '<h2>Domicilios</h2></div></div>' +
+      turnoHTML +
       '<div class="grid g-kpi" style="margin-bottom:14px">' +
         UI.kpi('Pedidos hoy', String(lista.length), 'domicilios registrados') +
         UI.kpi('Cobrado hoy', Util.money(totalDia), lista.filter(s=>s.estado==='pagada').length + ' cobrados') +
         UI.kpi('En despacho', String(enDespacho), 'pendientes de cobro o entrega') +
       '</div>' +
-      '<div class="card pad0">' +
+      '<div class="card pad0" style="margin-bottom:14px">' +
         UI.table(
           [{t:'#'},{t:'Cliente'},{t:'Dirección'},{t:'Teléfono'},{t:'Platos',n:1},{t:'Total',n:1},{t:'Estado'}],
           lista.length ? lista.map(s =>
-            '<tr style="cursor:pointer" data-domver="' + s.id + '">' +
+            '<tr style="cursor:pointer" data-domver="' + s.id + '" title="' +
+            ((s.estado==='pagada'||s.anulada) ? 'Ver / reimprimir' : 'Toca para editar este pedido') + '">' +
             '<td class="num">' + Util.esc(s.numero||'—') + '</td>' +
             '<td style="font-weight:600">' + Util.esc((s.entrega&&s.entrega.nombre)||'—') + '</td>' +
             '<td class="dim" style="font-size:12px">' + Util.esc((s.entrega&&s.entrega.direccion)||'—') + '</td>' +
@@ -5024,7 +5269,8 @@ Views.domicilios = {
             '<td class="n">' + Util.money(s.total||0) + '</td>' +
             '<td>' + estadoBadge(s) + '</td></tr>') : [],
           {emptyTitle:'Sin domicilios hoy', emptyMsg:'Pulsa "Nuevo domicilio" para registrar el primero.'}) +
-      '</div>';
+      '</div>' +
+      cierresHTML;
   },
 
   mount(){
@@ -5033,25 +5279,161 @@ Views.domicilios = {
     document.querySelectorAll('[data-domver]').forEach(tr => {
       tr.onclick = () => {
         const s = (DB.d.sales||[]).find(x=>x.id===tr.dataset.domver);
-        if (s) Views.domicilios.verTicket(s);
+        if (!s) return;
+        /* INTERVENCIÓN: un pedido ya cobrado o anulado es una factura
+           cerrada — solo se puede ver/reimprimir, para no alterar cifras
+           que ya se contabilizaron. Un pedido pendiente sí se puede abrir
+           para editar (Nota, Quitar, agregar platos, Enviar a Cocina o
+           Cobrar), por si la mesera o la cajera se equivocaron. */
+        if (s.estado==='pagada' || s.anulada) Views.domicilios.verTicket(s);
+        else Views.domicilios.abrirFormulario(s.id);
       };
+    });
+    /* INTERVENCIÓN: Turno de Domicilios — apertura/cierre por encargada */
+    const btnAbrirT = document.getElementById('dt-abrir');
+    if (btnAbrirT) btnAbrirT.onclick = () => this.abrirTurno();
+    const btnCerrarT = document.getElementById('dt-cerrar');
+    if (btnCerrarT) btnCerrarT.onclick = () => this.cerrarTurno();
+    const btnResumenT = document.getElementById('dt-resumen');
+    if (btnResumenT) btnResumenT.onclick = () => this.resumenMiTurno();
+    const fFecha = document.getElementById('dtf-fecha');
+    if (fFecha) fFecha.onchange = () => { this._filtroTurnos.fecha = fFecha.value||''; Router.render(); };
+    const fUser = document.getElementById('dtf-user');
+    if (fUser) fUser.onchange = () => { this._filtroTurnos.userId = fUser.value||''; Router.render(); };
+    const fLimpiar = document.getElementById('dtf-limpiar');
+    if (fLimpiar) fLimpiar.onclick = () => { this._filtroTurnos = {fecha:'', userId:''}; Router.render(); };
+    document.querySelectorAll('[data-turno-resumen]').forEach(btn =>
+      btn.onclick = () => this.resumenCierreTurno(btn.dataset.turnoResumen));
+  },
+
+  /** INTERVENCIÓN: abre el turno de domicilios para la encargada
+      actualmente autenticada (el nombre se toma directo de sus
+      credenciales de inicio de sesión, igual que hace Caja con
+      Auth.user). Cada encargada puede tener su propio turno abierto al
+      mismo tiempo que otras — a diferencia de la caja, que es única. */
+  abrirTurno(){
+    const uid = (Auth.user||{}).id;
+    if (!uid) return UI.toast('Debes iniciar sesión para abrir un turno.','warn');
+    if (DB.openDomTurno(uid)) return UI.toast('Ya tienes un turno de domicilios abierto.','warn');
+    const t = { id:Util.uid('dt'), userId:uid, apertura:Util.now(), cierre:null, estado:'abierta', act:Util.now() };
+    DB.d.domTurnos.push(t);
+    DB.touch('domTurnos');
+    Sync.enqueue('domTurnos','create', t);
+    DB.log('domturno:abrir', (DB.user(uid)||{}).nombre||'—', t.id);
+    UI.toast('Turno de domicilios abierto.','ok');
+    Router.render();
+  },
+
+  /** Cierra el turno de la encargada actual, con la misma confirmación
+      de seguridad que usa Caja antes de cerrar. */
+  async cerrarTurno(){
+    const uid = (Auth.user||{}).id;
+    const t = uid ? DB.openDomTurno(uid) : null;
+    if (!t) return UI.toast('No tienes un turno de domicilios abierto.','warn');
+    if (!(await UI.confirm('Usted cerrará su turno de domicilios, ¿realizó la impresión del Resumen del Turno?',
+      {ok:'Sí, continuar con el cierre'}))) return;
+    t.estado = 'cerrada';
+    t.cierre = Util.now();
+    t.act = Util.now();
+    DB.touch('domTurnos');
+    Sync.enqueue('domTurnos','update', t);
+    DB.log('domturno:cerrar', (DB.user(uid)||{}).nombre||'—', t.id);
+    UI.toast('Turno de domicilios cerrado.','ok');
+    Router.render();
+  },
+
+  /** Resumen imprimible (80 mm) del turno abierto de la encargada actual. */
+  resumenMiTurno(){
+    const uid = (Auth.user||{}).id;
+    const t = uid ? DB.openDomTurno(uid) : null;
+    if (!t) return UI.toast('No tienes un turno de domicilios abierto.','warn');
+    this._mostrarResumenTurno(t, Domicilios.turnoTotals(t), 'RESUMEN DE TURNO — DOMICILIOS');
+  },
+
+  /** Resumen imprimible de un turno de domicilios YA CERRADO, encontrado
+      en el historial filtrable por fecha/encargada. INTERVENCIÓN: esta
+      consulta queda reservada solo para administración. */
+  resumenCierreTurno(turnoId){
+    if (!Auth.can('admin')) return UI.toast('Solo un administrador puede imprimir el resumen de un cierre de turno.','warn');
+    const t = (DB.d.domTurnos||[]).find(x => x.id === turnoId);
+    if (!t) return UI.toast('No se encontró ese turno.','warn');
+    this._mostrarResumenTurno(t, Domicilios.turnoTotals(t), 'RESUMEN DE CIERRE — DOMICILIOS');
+  },
+
+  /** Ticket corporativo de 80 mm, mismo mecanismo de impresión que usa
+      toda la aplicación (fuerza 80 mm sin tocar la configuración
+      general). INTERVENCIÓN: misma estructura que el resumen de cierre
+      de Caja — facturas, efectivo, transferencia, ingresos y egresos. */
+  _mostrarResumenTurno(t, tt, titulo){
+    const cfg = DB.d.config;
+    const linea = (label, valor, opts) => {
+      opts = opts || {};
+      return '<div style="display:flex;justify-content:space-between;gap:10px;margin:' + (opts.mt||'3px') + ' 0;' +
+        (opts.grande ? 'font-size:14px;font-weight:800' : 'font-size:12px') + '">' +
+        '<span>' + label + '</span><b style="font-family:var(--mono)">' + Util.money(valor) + '</b></div>';
+    };
+    const cuerpo =
+      '<div class="ticket">' +
+      (Ticket.logoImp() ? '<div class="c"><img src="' + Ticket.logoImp() + '" style="max-width:55%;height:auto;margin-bottom:4px"></div>' : '') +
+      '<div class="c b lg">' + Util.esc((cfg.empresa||'').toUpperCase()) + '</div>' +
+      '<div class="c" style="font-size:10px">' + Util.esc(cfg.dir||'') + ' · Tel: ' + Util.esc(cfg.tel||'') + '</div>' +
+      '<hr>' +
+      '<div class="c b" style="font-size:13px;letter-spacing:.06em">' + Util.esc(titulo) + '</div>' +
+      '<div class="c tk-sub">' + Util.esc((DB.user(t.userId)||{}).nombre||'—') + '</div>' +
+      '<hr>' +
+      '<div>Apertura: ' + Util.dt(t.apertura) + '</div>' +
+      (t.cierre ? '<div>Cierre: ' + Util.dt(t.cierre) + '</div>' : '') +
+      '<div>Impreso: ' + Util.dt(Util.now()) + '</div>' +
+      '<hr>' +
+      linea('Facturas del turno', tt.cantidad, {grande:false}) +
+      '<hr>' +
+      linea('Efectivo', tt.efectivo) +
+      linea('Transferencias', tt.transferencia) +
+      (tt.otros ? linea('Otros medios', tt.otros) : '') +
+      '<hr>' +
+      linea('Ingresos (facturado)', tt.ingresos) +
+      linea('Egresos (gastos de la encargada)', -tt.egresos) +
+      '<hr>' +
+      linea('TOTAL DEL TURNO', tt.total, {grande:true, mt:'6px'}) +
+      '<hr>' +
+      '<div class="c" style="font-size:10px;margin-top:4px">Resumen totalizado del turno de domicilios</div>' +
+      '</div>';
+
+    UI.modal({
+      title: titulo.indexOf('CIERRE')>=0 ? 'Resumen de cierre' : 'Resumen de turno', size:'sm',
+      body:'<div class="ticket-frame">' + cuerpo + '</div>',
+      footer:'<button class="btn" data-close>Cerrar</button>' +
+        '<button class="btn gold" id="dtr-print">' + Util.ico('print') + ' Imprimir resumen</button>',
+      onMount(ov){
+        ov.querySelector('#dtr-print').onclick = () => {
+          DB.log('domturno:resumen', titulo + ' · Total ' + Util.money(tt.total), t.id);
+          const anchoOriginal = cfg.ticket;
+          cfg.ticket = '80';
+          UI.imprimir(ov);
+          cfg.ticket = anchoOriginal;
+        };
+      }
     });
   },
 
-  /* ── Formulario principal de nuevo domicilio ── */
+  /* ── Formulario principal de nuevo domicilio / edición de uno existente ── */
   abrirFormulario(saleId){
     const bor = Domicilios.borrador();
     /* Si se pasa un saleId, cargar ese pedido en el borrador */
     if (saleId && !bor._id){
       const s = (DB.d.sales||[]).find(x=>x.id===saleId);
       if (s){
+        if (s.estado==='pagada' || s.anulada){
+          UI.toast('Este pedido ya está cerrado; solo puede reimprimirse.','warn');
+          return Views.domicilios.verTicket(s);
+        }
         Object.assign(bor, {
           nombre:(s.entrega&&s.entrega.nombre)||'',
           contacto:(s.entrega&&s.entrega.contacto)||'',
           direccion:(s.entrega&&s.entrega.direccion)||'',
           telefono:(s.entrega&&s.entrega.telefono)||'',
-          items:(s.items||[]).map(i=>Object.assign({},i)),
-          nota:s.nota||'', _id:s.id
+          items:(s.items||[]).map(i=>Object.assign({}, i, {adiciones:Array.isArray(i.adiciones)?i.adiciones.map(a=>Object.assign({},a)):[]})),
+          nota:s.nota||'', _id:s.id, domicilioValor:(s.domicilio!=null ? s.domicilio : null)
         });
       }
     }
@@ -5063,7 +5445,7 @@ Views.domicilios = {
     const grupos = cats.map(c=>({cat:c, prods:prods.filter(p=>p.cat===c.id)})).filter(g=>g.prods.length);
 
     /* ── Renders internos ── */
-    const calcT = () => Domicilios.calcBorrador(bor.items);
+    const calcT = () => Domicilios.calcBorrador(bor.items, bor.domicilioValor);
 
     const renderResumen = () => {
       const t = calcT();
@@ -5072,18 +5454,36 @@ Views.domicilios = {
       return bor.items.map((it, idx) => {
         const adP = (it.adiciones||[]).reduce((s,x)=>s+(Number(x.precio)||0),0);
         const lineaTotal = (Number(it.precio||0)+adP)*(Number(it.qty)||1);
-        return '<div class="row" style="gap:8px;padding:7px 0;border-bottom:1px solid var(--line-soft)">' +
-          '<button class="btn sm icon ghost" data-dom-rm="' + idx + '" style="color:var(--ember-hi)">' + Util.ico('trash') + '</button>' +
-          '<div style="flex:1;min-width:0">' +
-            '<div style="font-weight:600;font-size:13px">' + Util.esc(it.nombre) + '</div>' +
-            '<div class="dim" style="font-size:11px">' + Util.money(it.precio) + '/u' + (adP>0?' · adiciones +'+Util.money(adP):'') + '</div>' +
+        /* INTERVENCIÓN: misma estructura e igual rotulado que usa el
+           módulo Vender en su carrito — botones de texto "Nota"/"Editar
+           nota" y "Quitar" (antes solo iconos, sin nombre). */
+        return '<div style="padding:7px 0;border-bottom:1px solid var(--line-soft)">' +
+          '<div class="row" style="gap:8px">' +
+            '<div style="flex:1;min-width:0">' +
+              '<div style="font-weight:600;font-size:13px">' + Util.esc(it.nombre) + '</div>' +
+              '<div class="dim" style="font-size:11px">' + Util.money(it.precio) + '/u' + (adP>0?' · adiciones +'+Util.money(adP):'') + '</div>' +
+            '</div>' +
+            '<span class="num" style="min-width:80px;text-align:right;font-weight:700;color:var(--brass-hi)">' + Util.money(lineaTotal) + '</span>' +
           '</div>' +
-          '<div class="row" style="gap:5px;flex:none">' +
-            '<button class="btn sm icon ghost" data-dom-dec="' + idx + '">−</button>' +
-            '<span class="num" style="min-width:22px;text-align:center;font-weight:700">' + it.qty + '</span>' +
-            '<button class="btn sm icon ghost" data-dom-inc="' + idx + '">+</button>' +
+          ((it.adiciones&&it.adiciones.length) ?
+            '<div style="margin-top:3px">' +
+              it.adiciones.map(a =>
+                '<div style="font-size:11px;color:var(--ember-hi);display:flex;justify-content:space-between;gap:4px">' +
+                  '<span>⊕ ' + Util.esc(a.nombre) + '</span>' +
+                  (a.precio>0 ? '<span style="font-family:var(--mono)">+' + Util.money(a.precio) + '</span>' : '<span style="color:var(--ash-dim)">sin cargo</span>') +
+                '</div>'
+              ).join('') +
+            '</div>' : '') +
+          (it.nota ? '<div style="font-size:11px;color:var(--brass-hi);margin-top:2px">✎ ' + Util.esc(it.nota) + '</div>' : '') +
+          '<div class="row" style="gap:6px;margin-top:6px">' +
+            '<button class="btn sm ghost ci-btn" data-dom-nota="' + idx + '">' + Util.ico('edit') + (it.nota ? ' Editar nota' : ' Nota') + '</button>' +
+            '<button class="btn sm ghost ci-btn" data-dom-rm="' + idx + '" style="color:var(--ash-dim)">Quitar</button>' +
+            '<div class="row" style="gap:5px;flex:none;margin-left:auto">' +
+              '<button class="btn sm icon ghost" data-dom-dec="' + idx + '">−</button>' +
+              '<span class="num" style="min-width:22px;text-align:center;font-weight:700">' + it.qty + '</span>' +
+              '<button class="btn sm icon ghost" data-dom-inc="' + idx + '">+</button>' +
+            '</div>' +
           '</div>' +
-          '<span class="num" style="min-width:80px;text-align:right;font-weight:700;color:var(--brass-hi)">' + Util.money(lineaTotal) + '</span>' +
         '</div>';
       }).join('') +
       '<div style="display:flex;flex-direction:column;gap:4px;margin-top:10px;padding:10px;background:var(--char-850);border-radius:var(--r);border:1px solid var(--line)">' +
@@ -5133,9 +5533,22 @@ Views.domicilios = {
           '<label class="f">Contacto / Alias<input class="inp" id="dm-contacto" placeholder="Referencia" value="' + Util.esc(bor.contacto) + '"></label>' +
           '<label class="f" style="grid-column:1/-1">Dirección de entrega<input class="inp" id="dm-dir" placeholder="Calle, barrio, referencias…" value="' + Util.esc(bor.direccion) + '"></label>' +
           '<label class="f">Teléfono<input class="inp" id="dm-tel" type="tel" placeholder="300 000 0000" value="' + Util.esc(bor.telefono) + '"></label>' +
+        '</div>' +
+        /* INTERVENCIÓN: botones flotantes de selección rápida para el
+           valor del domicilio, justo después de Teléfono. Al elegir uno,
+           se suma automáticamente al pedido y se refleja en el resumen,
+           en la comanda y en la factura (todos calculan el total a
+           partir de este mismo valor). */
+        '<div style="margin-top:12px">' +
+          '<span class="dim" style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase">Valor del domicilio</span>' +
+          '<div class="chips wrap" id="dm-domval" style="margin-top:6px">' +
+            [1000,2000,3000,4000,5000,6000,8000,10000].map(v =>
+              '<button type="button" class="chip' + (Number(bor.domicilioValor)===v?' ad-sel':'') + '" data-domval="' + v + '">' + Util.money(v) + '</button>'
+            ).join('') +
+          '</div>' +
         '</div></div>' +
 
-        /* ── Resumen del pedido ── */
+        /* ── Resumen del pedido (sección "Pedido": Nota + Quitar por plato) ── */
         '<div style="margin-top:20px">' +
           '<div class="eyebrow" style="margin-bottom:8px">Pedido</div>' +
           '<div id="dm-resumen">' + renderResumen() + '</div>' +
@@ -5155,11 +5568,27 @@ Views.domicilios = {
           '</label>' +
         '</div>',
 
+      /* INTERVENCIÓN: misma interfaz de acciones que la sección Pedido del
+         módulo Vender — Nuevo Pedido, Enviar a Cocina y Cobrar, del mismo
+         tamaño y estilo (todas parten de la clase base .btn). */
       footer:
         '<button class="btn" data-close>Cancelar</button>' +
-        '<button class="btn pri" id="dm-guardar">' + Util.ico('fire') + ' Guardar y enviar a cocina</button>',
+        '<button type="button" class="btn" id="dm-nuevo-pedido" style="' +
+          'background:linear-gradient(180deg,#FF9A3D 0%,#FB7B1E 55%,#E35F05 100%);' +
+          'border:1px solid #E35F05;color:#fff;font-weight:800;' +
+          'box-shadow:0 3px 0 #B8460A,0 4px 10px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.22);' +
+          'text-shadow:0 1px 1px rgba(0,0,0,.35);transition:.12s" ' +
+          'onmousedown="this.style.transform=\'translateY(2px)\';this.style.boxShadow=\'0 1px 0 #B8460A,0 2px 6px rgba(0,0,0,.25),inset 0 1px 0 rgba(255,255,255,.14)\'" ' +
+          'onmouseup="this.style.transform=\'\';this.style.boxShadow=\'0 3px 0 #B8460A,0 4px 10px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.22)\'" ' +
+          'onmouseleave="this.style.transform=\'\';this.style.boxShadow=\'0 3px 0 #B8460A,0 4px 10px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.22)\'" ' +
+          'title="Descarta este formulario y abre uno en blanco">' +
+          Util.ico('plus') + ' Nuevo Pedido</button>' +
+        '<button class="btn pri" id="dm-guardar">' + Util.ico('fire') + ' Enviar a Cocina</button>' +
+        (Auth.can('cobrar')
+          ? '<button class="btn gold" id="dm-cobrar" title="Cobrar de una vez este domicilio">' + Util.ico('cash') + ' Cobrar</button>'
+          : ''),
 
-      onMount(ov){
+      onMount(ov, cerrarModal){
         /* Leer campos de texto */
         const g = id => ov.querySelector('#' + id);
         const sync = () => {
@@ -5173,6 +5602,16 @@ Views.domicilios = {
           const el = g(id); if(el) el.oninput = sync;
         });
 
+        /* INTERVENCIÓN: botones rápidos de valor del domicilio — al elegir
+           uno, se guarda en el borrador y se refresca el resumen para que
+           el total (pedido, comanda y factura) lo sume de inmediato. */
+        const domvalBox = g('dm-domval');
+        if (domvalBox) domvalBox.querySelectorAll('[data-domval]').forEach(b => b.onclick = () => {
+          bor.domicilioValor = Number(b.dataset.domval);
+          domvalBox.querySelectorAll('[data-domval]').forEach(c => c.classList.toggle('ad-sel', c===b));
+          g('dm-resumen').innerHTML = renderResumen();
+        });
+
         /* Re-render de resumen + carta */
         const refrescar = () => {
           g('dm-resumen').innerHTML = renderResumen();
@@ -5180,7 +5619,232 @@ Views.domicilios = {
           enlazar();
         };
 
+        /* INTERVENCIÓN: "Nota · Indicaciones para cocina" del pedido a
+           domicilio — misma interfaz, secciones, funcionalidad y lógica
+           que ya tiene el módulo Vender en POS.note(lid) (Sopa, Cocción,
+           Acompañamientos, Ensaladas, Jugo incluido y Adiciones con
+           Cargo con su cuadrícula de icono+nombre), adaptada para
+           trabajar sobre bor.items[idx] en lugar de POS.cart. */
+        const notaItem = (idx) => {
+          const it = bor.items[idx]; if (!it) return;
+          const chipsCoccion = ['Término Azul','Término Medio','Tres Cuartos','Bien Asado','Sin Sal','Sin Picante'];
+          const chipsAcomp = ['Frijol','Espagueti','Huevo','Sin Ensalada','Doble Arroz','Solo Maduro','Solo Papas'];
+          const chipsEnsalada = ['Ensalada de cebolla y tomate','Ensalada de remolacha','Ensalada agridulce','Ensalada de repollo','Ensalada de lechuga'];
+          const p = DB.product(it.pid);
+          const esDesayuno = p && ((DB.cat(p.cat)||{}).id === 'c_des' || /desayuno/i.test((DB.cat(p.cat)||{}).nombre));
+          const jugos = ['Tomate','Guayaba','Tropical','Piña','Curuba','Guarapo','Claro','Mazamorra','Mango','Banano'];
+          const sopas = ['Sopa del día','Menudencia','Pescado'];
+          const excluirCarnes = ['tilapia','punta de anca','churrasco','trucha',
+            'picada para 2','picada para dos','picada para 4','picada para cuatro',
+            'sopa del dia','sopa del día','calentado',
+            'salchichas zenu','salchichas zenú','salchicha zenu','salchicha zenú',
+            'lonchitas','lonchita','arepa tela','ensalada','desayuno sencillo'];
+          const norm = str => str.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+          const carnesDesayuno = esDesayuno
+            ? DB.meats().filter(m => (m.tipo||'carne')==='carne' && !excluirCarnes.some(e=>norm(m.nombre).includes(norm(e)))).map(m=>m.nombre)
+            : [];
+
+          /* Copia local: solo se aplica a bor.items[idx] al pulsar Guardar */
+          let notaTmp = it.nota || '';
+          let adicionesTmp = Array.isArray(it.adiciones) ? it.adiciones.slice() : [];
+
+          const grpChips = (titulo, items) =>
+            '<div style="margin-top:10px">' +
+              '<span class="dim" style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase">' + titulo + '</span>' +
+              '<div class="chips wrap" style="margin-top:5px">' +
+                items.map(c => '<button type="button" class="chip" data-dmn-chip="' + Util.esc(c) + '">' + Util.esc(c) + '</button>').join('') +
+              '</div></div>';
+
+          const adDefHTML = (p && p.adicionesDefault && p.adicionesDefault.length)
+            ? p.adicionesDefault.map(a =>
+                '<button type="button" class="ad-chip" data-dmn-adchip="' + Util.esc(a.nombre) + '" data-dmn-adprecio="' + (Number(a.precio)||0) + '">' +
+                '<span class="ad-chip-ico">⊕</span><span>' + Util.esc(a.nombre) + '</span></button>').join('')
+            : '';
+
+          const bodyHTML =
+            '<label style="display:block;font-size:12px;color:var(--ash-dim);margin-bottom:5px">Indicación para cocina</label>' +
+            '<textarea id="dmn-ta" class="inp" rows="3" style="width:100%;resize:vertical" ' +
+              'placeholder="Escribe la indicación o selecciona opciones rápidas">' + Util.esc(notaTmp) + '</textarea>' +
+            grpChips('Sopa', sopas) +
+            grpChips('Cocción', chipsCoccion) +
+            grpChips('Acompañamientos', chipsAcomp) +
+            grpChips('Ensaladas', chipsEnsalada) +
+            (esDesayuno && carnesDesayuno.length ? grpChips('Carne', carnesDesayuno.map(c=>'Carne: '+c)) : '') +
+            grpChips('Jugo incluido', jugos.map(c=>'Jugo de '+c)) +
+            (esDesayuno ? grpChips('Bebida incluida', ['Café con Leche','Chocolate con Leche','Chocolate sin Leche','Tinto'].map(c=>'Bebida: '+c)) : '') +
+            '<hr style="border-color:var(--line);margin:12px 0 8px">' +
+            '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">' +
+              '<span style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--brass)">⊕ Adiciones con cargo — toca para agregar</span>' +
+            '</div>' +
+            '<div class="ad-grid">' +
+              adDefHTML +
+              '<button type="button" class="ad-chip" data-dmn-adchip="Aguacate"><span class="ad-chip-ico">🥑</span><span>Aguacate</span></button>' +
+              '<button type="button" class="ad-chip" data-dmn-adchip="Papas Fritas"><span class="ad-chip-ico">🍟</span><span>Papas Fritas</span></button>' +
+              '<button type="button" class="ad-chip" data-dmn-adchip="Tajadas Maduro"><span class="ad-chip-ico">🍌</span><span>Tajadas Maduro</span></button>' +
+              '<button type="button" class="ad-chip" data-dmn-adchip="Patacón"><span class="ad-chip-ico">🫓</span><span>Patacón</span></button>' +
+              '<button type="button" class="ad-chip" data-dmn-adchip="Sopa"><span class="ad-chip-ico">🍲</span><span>Sopa</span></button>' +
+              '<button type="button" class="ad-chip" data-dmn-adchip="Jugo"><span class="ad-chip-ico">🧃</span><span>Jugo</span></button>' +
+              '<button type="button" class="ad-chip" data-dmn-adchip="Huevo"><span class="ad-chip-ico">🍳</span><span>Huevo</span></button>' +
+            '</div>' +
+            '<div class="row" style="gap:6px;margin-top:8px">' +
+              '<input class="inp" id="dmn-ad-nombre" placeholder="Nombre de la adición" style="flex:2">' +
+              '<input class="inp num" id="dmn-ad-precio" type="number" min="0" step="500" placeholder="Precio ($0 = sin cargo)" style="flex:1">' +
+              '<button type="button" id="dmn-ad-btn" style="' +
+                'display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:8px;' +
+                'background:linear-gradient(180deg,#3EB86A 0%,#2E9A55 60%,#22753E 100%);' +
+                'color:#fff;font-weight:700;font-size:13px;border:none;cursor:pointer;white-space:nowrap;' +
+                'box-shadow:0 3px 0 #1A5C2E,0 4px 10px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.18);' +
+                'text-shadow:0 1px 1px rgba(0,0,0,.35);transition:.12s;' +
+                '" onmousedown="this.style.transform=\'translateY(2px)\';this.style.boxShadow=\'0 1px 0 #1A5C2E,0 2px 6px rgba(0,0,0,.25),inset 0 1px 0 rgba(255,255,255,.1)\'"' +
+                ' onmouseup="this.style.transform=\'\';this.style.boxShadow=\'0 3px 0 #1A5C2E,0 4px 10px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.18)\'"' +
+                ' onmouseleave="this.style.transform=\'\';this.style.boxShadow=\'0 3px 0 #1A5C2E,0 4px 10px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.18)\'">' +
+                '＋ Agregar Adición' +
+              '</button>' +
+            '</div>' +
+            '<div id="dmn-adiciones-list" style="margin-top:6px;border:1px solid var(--line);border-radius:var(--r);overflow:hidden"></div>';
+
+          UI.modal({
+            title: 'Nota · ' + it.nombre, size:'sm nota-xl',
+            body: bodyHTML,
+            /* INTERVENCIÓN: botón "Guardar y Nuevo Pedido" — naranja, en
+               alto relieve, misma lógica y funcionamiento que el botón
+               homónimo del módulo Vender: GARANTIZA el guardado de esta
+               nota/adiciones y de inmediato regresa al Menú del mismo
+               domicilio para seguir agregando platos. Así, en un solo
+               pedido la mesera o cajera puede sumar varios platos sin
+               perder lo ya indicado. */
+            footer: '<button type="button" class="btn" data-close>Cancelar</button>' +
+              '<button type="button" class="btn" id="dmn-guardar-nuevo" style="' +
+                'background:linear-gradient(180deg,#FF9A3D 0%,#FB7B1E 55%,#E35F05 100%);' +
+                'border:1px solid #E35F05;color:#fff;font-weight:800;' +
+                'box-shadow:0 3px 0 #B8460A,0 4px 10px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.22);' +
+                'text-shadow:0 1px 1px rgba(0,0,0,.35);transition:.12s" ' +
+                'onmousedown="this.style.transform=\'translateY(2px)\';this.style.boxShadow=\'0 1px 0 #B8460A,0 2px 6px rgba(0,0,0,.25),inset 0 1px 0 rgba(255,255,255,.14)\'" ' +
+                'onmouseup="this.style.transform=\'\';this.style.boxShadow=\'0 3px 0 #B8460A,0 4px 10px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.22)\'" ' +
+                'onmouseleave="this.style.transform=\'\';this.style.boxShadow=\'0 3px 0 #B8460A,0 4px 10px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.22)\'" ' +
+                'title="Guarda esta nota y regresa al menú para agregar otro plato">' +
+                Util.ico('plus') + ' Guardar y Nuevo Pedido</button>' +
+              '<button type="button" class="btn pri" id="dmn-ok">' + Util.ico('chk') + ' Guardar nota</button>',
+            onMount(ovn, cerrarN){
+              const ta = ovn.querySelector('#dmn-ta');
+              const adBox = ovn.querySelector('#dmn-adiciones-list');
+
+              const paintAd = () => {
+                adBox.innerHTML = adicionesTmp.length
+                  ? adicionesTmp.map((a, i) =>
+                      '<div class="row" style="gap:6px;padding:6px 8px;border-bottom:1px solid var(--line);align-items:center">' +
+                        '<span style="flex:1;font-size:13px;font-weight:600">' + Util.esc(a.nombre) + '</span>' +
+                        '<b class="num" style="font-size:13px;white-space:nowrap;color:var(--brass)">' +
+                          (a.precio > 0 ? '+ ' + Util.money(a.precio) : '<span class="dim">sin cargo</span>') +
+                        '</b>' +
+                        '<button type="button" class="btn sm ghost" data-dmn-addel="' + i + '" ' +
+                          'style="color:var(--ash-dim);padding:2px 6px;flex:none" title="Quitar">✕</button>' +
+                      '</div>').join('')
+                  : '<div class="dim" style="padding:10px 8px;font-size:12px;text-align:center">Sin adiciones — toca un chip para agregar</div>';
+              };
+
+              const actualizarChips = () => {
+                ovn.querySelectorAll('[data-dmn-adchip]').forEach(b => {
+                  const nom = b.dataset.dmnAdchip;
+                  const yaEsta = adicionesTmp.some(a => a.nombre.toLowerCase() === nom.toLowerCase());
+                  b.classList.toggle('on', yaEsta);
+                  b.style.opacity = yaEsta ? '0.55' : '';
+                  b.title = yaEsta ? nom + ' ya agregado' : '';
+                });
+              };
+
+              const agregarAdicion = (nom, pre) => {
+                nom = String(nom||'').trim();
+                if (!nom) return;
+                pre = Math.max(0, Number(pre)||0);
+                const idxAd = adicionesTmp.findIndex(a => a.nombre.toLowerCase() === nom.toLowerCase());
+                if (idxAd >= 0){
+                  adicionesTmp.splice(idxAd, 1);
+                  paintAd();
+                  actualizarChips();
+                  return;
+                }
+                adicionesTmp.push({nombre:nom, precio:pre});
+                paintAd();
+                actualizarChips();
+              };
+
+              ovn.querySelectorAll('[data-dmn-chip]').forEach(b => b.addEventListener('click', async () => {
+                const val = b.dataset.dmnChip;
+                const actual = ta.value || '';
+                const yaEsta = actual.split(',').map(str=>str.trim()).some(str=>str.toLowerCase()===val.toLowerCase());
+                if (yaEsta){
+                  const ok = await UI.confirm(
+                    '«' + val + '» ya está en las indicaciones. ¿Deseas agregarlo de nuevo?',
+                    {ok:'Sí, agregar otra vez', title:'Indicación duplicada'});
+                  if (!ok) return;
+                }
+                ta.value = (actual ? actual + ', ' : '') + val;
+                ta.scrollTop = ta.scrollHeight;
+              }));
+
+              ovn.querySelectorAll('[data-dmn-adchip]').forEach(b => b.addEventListener('click', () => {
+                const nom = b.dataset.dmnAdchip;
+                const inpNom = ovn.querySelector('#dmn-ad-nombre');
+                const inpPre = ovn.querySelector('#dmn-ad-precio');
+                inpNom.value = nom;
+                inpPre.value = '';
+                inpPre.focus();
+                ovn.querySelectorAll('[data-dmn-adchip]').forEach(c => c.classList.remove('ad-sel'));
+                b.classList.add('ad-sel');
+              }));
+
+              ovn.querySelector('#dmn-ad-btn').addEventListener('click', () => {
+                const nom = (ovn.querySelector('#dmn-ad-nombre').value||'').trim();
+                const pre = Math.max(0, Number(ovn.querySelector('#dmn-ad-precio').value)||0);
+                if (!nom) return UI.toast('Escribe el nombre de la adición.','warn');
+                agregarAdicion(nom, pre);
+                ovn.querySelector('#dmn-ad-nombre').value = '';
+                ovn.querySelector('#dmn-ad-precio').value = '';
+                ovn.querySelectorAll('[data-dmn-adchip]').forEach(c => c.classList.remove('ad-sel'));
+              });
+
+              adBox.addEventListener('click', e => {
+                const del = e.target.closest('[data-dmn-addel]');
+                if (!del) return;
+                adicionesTmp.splice(Number(del.dataset.dmnAddel), 1);
+                paintAd();
+                actualizarChips();
+              });
+
+              paintAd();
+              actualizarChips();
+
+              let _guardado = false;
+              const guardarNota = () => {
+                if (_guardado) return false;
+                _guardado = true;
+                it.nota = (ta.value || '').trim();
+                it.adiciones = adicionesTmp.slice();
+                return true;
+              };
+              ovn.querySelector('#dmn-ok').onclick = () => {
+                if (!guardarNota()) return;
+                cerrarN();
+                refrescar();
+              };
+              /* "Guardar y Nuevo Pedido": guarda igual que arriba y además
+                 regresa al Menú del domicilio para agregar otro plato,
+                 haciendo scroll automático hasta la carta. */
+              ovn.querySelector('#dmn-guardar-nuevo').onclick = () => {
+                if (!guardarNota()) return;
+                cerrarN();
+                refrescar();
+                const cartaEl = g('dm-carta');
+                if (cartaEl) cartaEl.scrollIntoView({behavior:'smooth', block:'start'});
+                UI.toast('Nota guardada. Agrega el siguiente plato.', 'ok', 2600);
+              };
+            }
+          });
+        };
+
         const enlazar = () => {
+          ov.querySelectorAll('[data-dom-nota]').forEach(b => b.onclick = () => notaItem(parseInt(b.dataset.domNota)));
           ov.querySelectorAll('[data-dom-rm]').forEach(b => b.onclick = () => {
             bor.items.splice(parseInt(b.dataset.domRm),1); refrescar();
           });
@@ -5205,40 +5869,69 @@ Views.domicilios = {
               total:Number(p.precio)||0
             });
             refrescar();
+            /* INTERVENCIÓN: al seleccionar un plato del menú, se hace scroll
+               automático hasta la sección Pedido (donde queda el plato
+               recién agregado junto a su botón "Nota"), para que la
+               mesera no tenga que desplazarse manualmente por el
+               formulario. */
+            const resumenEl = g('dm-resumen');
+            if (resumenEl) resumenEl.scrollIntoView({behavior:'smooth', block:'start'});
           });
         };
         enlazar();
 
-        /* Guardar y enviar a cocina */
-        ov.querySelector('#dm-guardar').onclick = () => {
-          sync();
-          if (!bor.nombre)    return UI.toast('Escribe el nombre del cliente.','warn');
-          if (!bor.direccion) return UI.toast('La dirección de entrega es obligatoria.','warn');
-          if (!bor.items.length) return UI.toast('Agrega al menos un plato al pedido.','warn');
-
+        /* Arma el objeto "venta" a partir del borrador actual; se reutiliza
+           tanto para "Enviar a Cocina" como para "Cobrar", así ambos
+           botones parten siempre de los MISMOS datos y nunca divergen. */
+        const construirVenta = () => {
           const c = DB.d.config;
-          const t = Domicilios.calcBorrador(bor.items);
-          const numero = (c.prefijo||'') + String(Number(c.consecutivo)||1).padStart(5,'0');
-          const ahora  = Util.now();
-
-          const venta = {
-            id: bor._id || Util.uid('v'), numero, fecha:ahora,
-            sede:c.sedeId, userId:(Auth.user||{}).id,
-            clienteId:'cl_1', mesa:'DOM', tipo:'domicilio',
-            entrega:{nombre:bor.nombre, contacto:bor.contacto, direccion:bor.direccion, telefono:bor.telefono},
-            items: bor.items.map(i=>{
-              const adP=(i.adiciones||[]).reduce((s,x)=>s+(Number(x.precio)||0),0);
-              return Object.assign({},i,{total:(Number(i.precio||0)+adP)*(Number(i.qty)||1)});
-            }),
-            subtotal:t.subtotal, descuento:0, impuesto:t.impuesto,
-            propina:0, domicilio:t.domicilio, costo:0,
-            total:t.total, pagos:[], cambio:0,
-            estado:'pendiente', nota:bor.nota, sync:false, act:ahora
+          const t = calcT();
+          /* INTERVENCIÓN (corrección de raíz): el turno de domicilios de
+             cada encargada se calcula filtrando las ventas por el
+             userId de quien la creó. Antes este campo se reescribía en
+             CADA guardado (incluido "Enviar a Cocina" y "Cobrar") con
+             quien estuviera conectado en ese momento — si otra persona
+             distinta a quien tomó el pedido terminaba guardándolo o
+             cobrándolo, la venta "cambiaba de dueña" y el resumen de
+             turno de la encargada original quedaba en ceros. Ahora se
+             conserva SIEMPRE el userId original de la venta ya creada;
+             solo se usa el usuario conectado actual cuando el domicilio
+             es nuevo. */
+          const original = bor._id ? (DB.d.sales||[]).find(x=>x.id===bor._id) : null;
+          const numero = bor._id
+            ? ((DB.d.sales||[]).find(x=>x.id===bor._id)||{}).numero || ((c.prefijo||'') + String(Number(c.consecutivo)||1).padStart(5,'0'))
+            : (c.prefijo||'') + String(Number(c.consecutivo)||1).padStart(5,'0');
+          const ahora = Util.now();
+          return {
+            numero, ahora,
+            venta:{
+              id: bor._id || Util.uid('v'), numero, fecha:ahora,
+              sede:c.sedeId, userId:(original && original.userId) || (Auth.user||{}).id,
+              clienteId:'cl_1', mesa:'DOM', tipo:'domicilio',
+              entrega:{nombre:bor.nombre, contacto:bor.contacto, direccion:bor.direccion, telefono:bor.telefono},
+              items: bor.items.map(i=>{
+                const adP=(i.adiciones||[]).reduce((s,x)=>s+(Number(x.precio)||0),0);
+                return Object.assign({},i,{total:(Number(i.precio||0)+adP)*(Number(i.qty)||1)});
+              }),
+              subtotal:t.subtotal, descuento:0, impuesto:t.impuesto,
+              propina:0, domicilio:t.domicilio, costo:0,
+              total:t.total, pagos:[], cambio:0,
+              estado:'pendiente', nota:bor.nota, sync:false, act:ahora
+            }
           };
+        };
 
+        /* Guarda / actualiza la venta y su comanda de cocina (KDS).
+           CORRECCIÓN DE RAÍZ: al editar un domicilio ya enviado (bor._id
+           existente), antes se detectaba la comanda ya creada (yaOrden) y
+           simplemente se dejaba intacta — el tiquete de cocina se quedaba
+           con los platos viejos aunque la factura ya tuviera los nuevos.
+           Ahora, si la comanda ya existe, se ACTUALIZA con los ítems y la
+           nota vigentes, para que cocina y factura jamás diverjan. */
+        const guardarVenta = (venta) => {
+          const c = DB.d.config;
           if (!bor._id) c.consecutivo = (Number(c.consecutivo)||1)+1;
 
-          /* Guardar / actualizar la venta */
           if (bor._id){
             const idx = DB.d.sales.findIndex(x=>x.id===bor._id);
             if (idx>=0) DB.d.sales[idx]=venta; else DB.d.sales.push(venta);
@@ -5248,31 +5941,154 @@ Views.domicilios = {
           DB.touch('sales','config');
           Sync.enqueue('sales', bor._id ? 'update' : 'create', venta);
 
-          /* Crear orden para KDS */
           if (!DB.d.orders) DB.d.orders=[];
-          const yaOrden = DB.d.orders.find(o=>o.saleId===venta.id);
-          if (!yaOrden){
+          let orden = DB.d.orders.find(o=>o.saleId===venta.id);
+          if (!orden){
             const seq = (Number(c.comandaSeq)||0)+1;
             c.comandaSeq = seq;
-            const orden = {
+            orden = {
               id:Util.uid('o'), saleId:venta.id, numero:'C'+String(seq).padStart(4,'0'),
               mesa:'DOM-'+(bor.telefono||'').slice(-4),
               tipo:'domicilio', entrega:venta.entrega,
               items:venta.items, estado:'pendiente',
-              nota:bor.nota, fecha:ahora, act:ahora,
+              nota:bor.nota, fecha:venta.fecha, act:venta.fecha,
               meseroId:(Auth.user||{}).id, sync:false
             };
             DB.d.orders.push(orden);
             DB.touch('orders');
             Sync.enqueue('orders','create',orden);
+          } else if (orden.estado !== 'cobrada' && orden.estado !== 'cancelada') {
+            orden.entrega = venta.entrega;
+            orden.items = venta.items;
+            orden.nota = bor.nota;
+            orden.act = Util.now();
+            DB.touch('orders');
+            Sync.enqueue('orders','update',orden);
           }
+          return orden;
+        };
 
-          DB.log('domicilio:crear', numero+' · '+bor.nombre+' · '+bor.direccion+' · '+Util.money(t.total), venta.id);
-          bor._id = venta.id;
+        /* Enviar a Cocina */
+        ov.querySelector('#dm-guardar').onclick = () => {
+          sync();
+          if (!bor.nombre)    return UI.toast('Escribe el nombre del cliente.','warn');
+          if (!bor.direccion) return UI.toast('La dirección de entrega es obligatoria.','warn');
+          if (!bor.items.length) return UI.toast('Agrega al menos un plato al pedido.','warn');
+
+          const { venta } = construirVenta();
+          guardarVenta(venta);
+          /* INTERVENCIÓN (causa raíz): antes, la lista y los KPIs
+             (Pedidos hoy, Cobrado hoy, En despacho) solo se actualizaban
+             si luego se pulsaba "Imprimir" o "Nuevo pedido" en el
+             tiquete — si el operario solo cerraba esa ventana, el
+             módulo seguía mostrando los datos de antes de crear el
+             domicilio. Ahora se refresca la vista de inmediato, en el
+             mismo instante en que el domicilio queda registrado. */
+          Router.render();
+
+          DB.log('domicilio:crear', venta.numero+' · '+bor.nombre+' · '+bor.direccion+' · '+Util.money(venta.total), venta.id);
           UI.toast('Pedido de '+bor.nombre+' enviado a cocina.','ok',3800);
-          close();
+          cerrarModal();
+          /* Se limpia el borrador de inmediato: el tiquete que sigue es
+             solo un comprobante, ya no debe mantener el pedido "vivo". */
+          Domicilios.resetBorrador();
           Views.domicilios.imprimirTicket(venta);
         };
+
+        /* Cobrar — INTERVENCIÓN (causa raíz de la duplicidad): antes el
+           módulo Domicilios no tenía forma de marcar un pedido como
+           pagado; para cobrarlo, la cajera tenía que ir a "Comandas" y
+           usar el botón "Cobrar" genérico, el cual SIEMPRE crea una
+           venta nueva e independiente — resultando en DOS facturas para
+           un mismo domicilio (la "pendiente" de aquí y la "pagada" de
+           allá), cada una con su propio consecutivo y, si hubo ediciones
+           entre una y otra, con totales distintos. Ahora "Cobrar" marca
+           EL MISMO registro (misma id) como pagado, cierra también su
+           comanda (por lo que deja de aparecer para cobro en Comandas) y
+           así ya no puede volver a facturarse por duplicado. */
+        const btnCobrar = ov.querySelector('#dm-cobrar');
+        if (btnCobrar) btnCobrar.onclick = () => {
+          sync();
+          if (!bor.nombre)    return UI.toast('Escribe el nombre del cliente.','warn');
+          if (!bor.direccion) return UI.toast('La dirección de entrega es obligatoria.','warn');
+          if (!bor.items.length) return UI.toast('Agrega al menos un plato al pedido.','warn');
+
+          const { venta } = construirVenta();
+          const METODOS = ['Efectivo','Tarjeta débito','Tarjeta crédito','Transferencia','Nequi','Daviplata','Otro'];
+          UI.modal({
+            title:'Cobrar domicilio', size:'sm',
+            body:
+              '<div class="row" style="justify-content:space-between;margin-bottom:12px">' +
+                '<span class="mut">Cliente</span><b>' + Util.esc(bor.nombre) + '</b></div>' +
+              '<div class="row" style="justify-content:space-between;margin-bottom:12px">' +
+                '<span class="mut">Total a cobrar</span><b style="font-size:20px;color:var(--brass-hi)">' + Util.money(venta.total) + '</b></div>' +
+              '<label class="f">Forma de pago' +
+                '<select class="inp" id="dmc-met">' + METODOS.map(m=>'<option>'+m+'</option>').join('') + '</select>' +
+              '</label>',
+            footer:'<button type="button" class="btn" data-close>Cancelar</button>' +
+              '<button type="button" class="btn gold" id="dmc-ok">' + Util.ico('cash') + ' Confirmar cobro</button>',
+            onMount(ovc, cerrarC){
+              ovc.querySelector('#dmc-ok').onclick = () => {
+                const metodo = ovc.querySelector('#dmc-met').value || 'Efectivo';
+                venta.estado = 'pagada';
+                venta.pagos = [{metodo, monto:venta.total}];
+                venta.cambio = 0;
+                const orden = guardarVenta(venta);
+                if (orden){
+                  orden.estado = 'cobrada';
+                  orden.ventaId = venta.id; orden.numeroVenta = venta.numero;
+                  orden.tiempos = Object.assign({}, orden.tiempos, {cobrado:venta.fecha});
+                  orden.act = Util.now();
+                  DB.touch('orders');
+                  Sync.enqueue('orders','update', orden);
+                }
+                if (metodo === 'Efectivo'){
+                  const caja = DB.openCash();
+                  if (caja){
+                    caja.movs.push({id:Util.uid('mv'), tipo:'venta', fecha:venta.fecha, concepto:'Domicilio ' + venta.numero,
+                      monto:venta.total, metodo:'Efectivo', ventaId:venta.id, userId:venta.userId});
+                    caja.act = Util.now();
+                    DB.touch('cash');
+                    Sync.enqueue('cash','update', caja);
+                  }
+                }
+                /* INTERVENCIÓN (causa raíz): refrescar de inmediato la
+                   vista del módulo (KPIs "Cobrado hoy"/"En despacho" y
+                   la lista), sin depender de qué se haga después con el
+                   tiquete de confirmación. */
+                Router.render();
+                DB.log('domicilio:cobrar', venta.numero+' · '+bor.nombre+' · '+Util.money(venta.total)+' · '+metodo, venta.id);
+                UI.toast('Domicilio de '+bor.nombre+' cobrado por '+Util.money(venta.total)+'.','ok',3800);
+                cerrarC();
+                cerrarModal();
+                Domicilios.resetBorrador();
+                Views.domicilios.imprimirTicket(venta);
+              };
+            }
+          });
+        };
+
+        /* Nuevo Pedido — descarta este formulario (con confirmación si hay
+           datos sin guardar) y abre uno completamente nuevo. */
+        ov.querySelector('#dm-nuevo-pedido').onclick = async () => {
+          sync();
+          const hayDatos = bor.nombre || bor.contacto || bor.direccion || bor.telefono || bor.items.length;
+          if (hayDatos && !(await UI.confirm(
+            '¿Descartar este domicilio y comenzar uno nuevo? Los datos no guardados se perderán.',
+            {ok:'Sí, nuevo pedido', danger:true}))) return;
+          cerrarModal();
+          Domicilios.resetBorrador();
+          Views.domicilios.abrirFormulario();
+        };
+
+        /* INTERVENCIÓN (corrección de raíz): cerrar este formulario por
+           cualquier vía que no sea guardar (Cancelar, la "X" o un clic
+           fuera del modal) también debe limpiar el borrador — si no, el
+           próximo "Nuevo domicilio" reabre estos mismos datos a medio
+           llenar y termina mezclándolos con el siguiente cliente. */
+        ov.addEventListener('click', e => {
+          if (e.target === ov || e.target.closest('[data-close]')) Domicilios.resetBorrador();
+        });
       }
     });
   },
@@ -5301,7 +6117,7 @@ Views.domicilios = {
       '<div class="c b lg">'+Util.esc((c.empresa||'').toUpperCase())+'</div>' +
       '<div class="c" style="font-size:10px">'+Util.esc(c.dir||'')+' · Tel: '+Util.esc(c.tel||'')+'</div>' +
       line +
-      '<div class="c b" style="font-size:16px;letter-spacing:.1em">🛵 DOMICILIO</div>' +
+      '<div class="c b" style="font-size:16px;letter-spacing:.1em">🛵 DOMICILIO' + (venta.estado==='pagada' ? ' · PAGADO' : '') + '</div>' +
       '<div class="c b tk-mesa"># '+Util.esc(venta.numero)+'</div>' +
       '<div class="c tk-sub">'+Util.dt(venta.fecha)+'</div>' +
       line +
@@ -5750,6 +6566,13 @@ const Ticket = {
         ? '<hr><div class="tk-sub"><b>Entrega:</b> ' + Util.esc(o.entrega.direccion||'') +
           (o.entrega.telefono ? '<br>Tel: ' + Util.esc(o.entrega.telefono) : '') + '</div>' : '') +
       (llevar && o.domicilio ? '<div class="tk-sub"><b>Domicilio:</b> ' + Util.money(o.domicilio) + '</div>' : '') +
+      /* INTERVENCIÓN: total general de la comanda impresa, sumando todos
+         los productos (más domicilio si aplica), alineado a la derecha
+         en la parte inferior del ticket. */
+      '<hr><div class="tk-total-row">' +
+        '<span class="tk-total-lbl">TOTAL</span>' +
+        '<span class="tk-total-val">' + Util.money(subtotalRonda + (llevar ? (Number(o.domicilio)||0) : 0)) + '</span>' +
+      '</div>' +
       '</div>';
     /* INTERVENCIÓN: en tablet/móvil, junto al botón Imprimir se agrega un
        botón rojo en alto relieve "Editar Comanda" del mismo tamaño, para
@@ -7524,7 +8347,49 @@ Views.comidas = {
             '<td class="mut" style="font-size:12px">' + Util.esc(m.nota||'—') + '</td>' +
             '<td class="dim">' + Util.esc(m.registroNombre||'—') + '</td>' +
             '<td class="n">' + Util.money(m.costo||0) + '</td></tr>'),
-          {emptyTitle:'Todavía no hay registros', emptyMsg:'Registra la primera comida del personal.'}) + '</div>';
+          {emptyTitle:'Todavía no hay registros', emptyMsg:'Registra la primera comida del personal.'}) + '</div>' +
+
+      /* INTERVENCIÓN: historial completo, oculto por defecto, que se
+         despliega con un filtro de fechas (Desde/Hasta) para verificar
+         registros de cualquier periodo, con opción de imprimir tanto el
+         listado filtrado como la comanda de cada registro individual. */
+      this.historialHTML();
+  },
+
+  historialHTML(){
+    const h = this._hist || (this._hist = {abierto:false, desde:Util.today(), hasta:Util.today()});
+    if (!h.abierto){
+      return '<div class="card pad0" style="margin-top:14px"><div class="card-h" style="justify-content:space-between">' +
+        '<h3>Historial de alimentación</h3>' +
+        '<button class="btn sm ghost" id="alHistToggle">' + Util.ico('search') + ' Ver historial por fechas</button>' +
+        '</div></div>';
+    }
+    const filtrados = DB.meals().filter(m => {
+      const f = (m.fecha||'').slice(0,10);
+      return f >= h.desde && f <= h.hasta;
+    }).slice().reverse();
+    const costoFiltrado = filtrados.reduce((a,m)=>a+(m.costo||0),0);
+    return '<div class="card pad0" style="margin-top:14px">' +
+      '<div class="card-h" style="justify-content:space-between;flex-wrap:wrap;gap:8px">' +
+        '<h3>Historial de alimentación</h3>' +
+        '<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">' +
+          '<label class="f" style="margin:0"><span style="font-size:11px">Desde</span><input class="inp" type="date" id="alHistDesde" value="' + h.desde + '" max="' + Util.today() + '"></label>' +
+          '<label class="f" style="margin:0"><span style="font-size:11px">Hasta</span><input class="inp" type="date" id="alHistHasta" value="' + h.hasta + '" max="' + Util.today() + '"></label>' +
+          (filtrados.length ? '<button class="btn sm gold" id="alHistImprimir">' + Util.ico('print') + ' Imprimir historial</button>' : '') +
+          '<button class="btn sm ghost" id="alHistToggle">Ocultar</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="dim" style="padding:8px 16px 0;font-size:12px">' + filtrados.length + ' registro(s) · Costo total ' + Util.money(costoFiltrado) + '</div>' +
+      UI.table([{t:'Fecha'},{t:'Persona'},{t:'Carne'},{t:'Observación'},{t:'Registró'},{t:'Costo',n:1},{t:'',n:1}],
+        filtrados.map(m =>
+          '<tr><td>' + Util.dt(m.fecha) + '</td>' +
+          '<td>' + Util.esc(DB.nombrePersona(m.userId, m.userNombre)) + '</td>' +
+          '<td>' + Util.esc(m.carneNombre) + '</td>' +
+          '<td class="mut" style="font-size:12px">' + Util.esc(m.nota||'—') + '</td>' +
+          '<td class="dim">' + Util.esc(m.registroNombre||'—') + '</td>' +
+          '<td class="n">' + Util.money(m.costo||0) + '</td>' +
+          '<td class="n"><button class="btn sm ghost" data-hist-print="' + m.id + '" title="Imprimir esta comanda">' + Util.ico('print') + '</button></td></tr>'),
+        {emptyTitle:'Sin registros en ese rango', emptyMsg:'Prueba con otro rango de fechas.'}) + '</div>';
   },
 
   mount(){
@@ -7537,6 +8402,19 @@ Views.comidas = {
     }
     document.querySelectorAll('[data-dar]').forEach(b => b.onclick = () => this.registrar(b.dataset.dar));
     document.querySelectorAll('[data-anular]').forEach(b => b.onclick = () => this.anular(b.dataset.anular));
+    /* INTERVENCIÓN: historial oculto con filtro de fechas */
+    const hTog = document.getElementById('alHistToggle');
+    if (hTog) hTog.onclick = () => { this._hist.abierto = !this._hist.abierto; Router.render(); };
+    const hDesde = document.getElementById('alHistDesde');
+    if (hDesde) hDesde.onchange = () => { this._hist.desde = hDesde.value || Util.today(); Router.render(); };
+    const hHasta = document.getElementById('alHistHasta');
+    if (hHasta) hHasta.onchange = () => { this._hist.hasta = hHasta.value || Util.today(); Router.render(); };
+    const hImp = document.getElementById('alHistImprimir');
+    if (hImp) hImp.onclick = () => this.imprimirHistorial();
+    document.querySelectorAll('[data-hist-print]').forEach(b => b.onclick = () => {
+      const reg = (DB.d.meals||[]).find(x => x.id === b.dataset.histPrint);
+      if (reg) this.imprimirComanda(reg);
+    });
     const bind = (a, fn) => { const b = document.querySelector('[data-act=' + a + ']'); if (b) b.onclick = fn; };
     bind('registrar', () => this.registrar());
     bind('personal', () => this.personal());
@@ -7649,7 +8527,14 @@ Views.comidas = {
           if (!carne) return UI.toast('Elige la carne.','warn');
           const nota = (box.querySelector('#cmNota')||{}).value || '';
           const r = Views.comidas.guardar(sel, carne, nota, cantidadHuevos);
-          if (r) close();
+          if (r){
+            close();
+            /* INTERVENCIÓN: al registrar la comida se genera de una vez la
+               comanda de ese plato (empleado, hora, plato y observación)
+               lista para que Caja la imprima en la térmica de 80 mm y
+               pase a cocina. */
+            Views.comidas.imprimirComanda(r);
+          }
         };
       }
     });
@@ -7687,7 +8572,92 @@ Views.comidas = {
     Sync.enqueue('meats','update', m);
     UI.toast(u.nombre.split(' ')[0] + ' registrado: ' + m.nombre + (cant > 1 ? ' ×' + cant + ' porciones' : '') + '. Queda bloqueado hasta mañana.','ok', 4600);
     Router.render();
-    return true;
+    return reg;
+  },
+
+  /** INTERVENCIÓN: comanda individual de un plato de alimentación de
+      personal — empleado, hora, plato y observación — en el mismo
+      formato de ticket térmico de 80&nbsp;mm que usa el resto de la
+      aplicación, lista para que Caja la pase a cocina. */
+  imprimirComanda(reg){
+    const c = DB.d.config;
+    const line = '<hr>';
+    const cuerpo = '<div class="ticket">' +
+      (Ticket.logoImp() ? '<div class="c"><img src="' + Ticket.logoImp() + '" style="max-width:50%;height:auto;margin-bottom:4px"></div>' : '') +
+      '<div class="c b" style="font-size:13px;letter-spacing:.08em">COMANDA · ALIMENTACIÓN PERSONAL</div>' +
+      line +
+      '<div class="c b" style="font-size:16px">' + Util.esc(reg.userNombre) + '</div>' +
+      '<div class="c tk-sub">' + Util.esc(reg.rol||'') + '</div>' +
+      line +
+      '<div>Fecha: ' + Util.date(reg.fecha) + '</div>' +
+      '<div>Hora: <b>' + Util.time(reg.fecha) + '</b></div>' +
+      line +
+      '<div class="c b" style="font-size:15px">' + Util.esc(reg.carneNombre) + '</div>' +
+      (reg.nota ? '<div style="margin-top:4px;font-style:italic">Obs: ' + Util.esc(reg.nota) + '</div>' : '') +
+      line +
+      '<div style="font-size:10px">Registró: ' + Util.esc(reg.registroNombre||'—') + '</div>' +
+      '<div class="c" style="font-size:10px;margin-top:4px">Vale interno — no es factura de venta</div>' +
+      '</div>';
+    UI.modal({title:'Comanda de alimentación', size:'sm',
+      body:'<div class="ticket-frame">' + cuerpo + '</div>',
+      footer:'<button class="btn" data-close>Cerrar</button>' +
+        '<button class="btn gold" id="cmTk">' + Util.ico('print') + ' Imprimir</button>',
+      onMount(ov){
+        ov.querySelector('#cmTk').onclick = () => {
+          DB.log('alimentacion:comanda', reg.userNombre + ' · ' + reg.carneNombre, reg.id);
+          const anchoOriginal = c.ticket;
+          c.ticket = '80';
+          UI.imprimir(ov);
+          c.ticket = anchoOriginal;
+        };
+      }});
+  },
+
+  /** INTERVENCIÓN: imprime en 80&nbsp;mm el listado del historial ya
+      filtrado por el rango de fechas (Desde/Hasta) seleccionado, para
+      poder verificar y entregar un consolidado de ese periodo. */
+  imprimirHistorial(){
+    const h = this._hist || {desde:Util.today(), hasta:Util.today()};
+    const c = DB.d.config;
+    const line = '<hr>';
+    const filtrados = DB.meals().filter(m => {
+      const f = (m.fecha||'').slice(0,10);
+      return f >= h.desde && f <= h.hasta;
+    }).slice().reverse();
+    const costoTotal = filtrados.reduce((a,m)=>a+(m.costo||0),0);
+    const filas = filtrados.length
+      ? filtrados.map(m =>
+          '<tr><td class="b">' + Util.esc(DB.nombrePersona(m.userId, m.userNombre)) + '</td></tr>' +
+          '<tr><td>' + Util.esc(m.carneNombre) + ' · ' + Util.dt(m.fecha) + '</td></tr>' +
+          (m.nota ? '<tr><td style="font-size:10px;color:#555">* ' + Util.esc(m.nota) + '</td></tr>' : '') +
+          '<tr><td class="r" style="font-size:10px">Costo: ' + Util.money(m.costo||0,false) + '</td></tr>'
+        ).join('<tr><td style="border-bottom:1px dotted #999"></td></tr>')
+      : '<tr><td class="c" style="padding:10px 0;color:#777">Sin registros en ese rango</td></tr>';
+    const cuerpo = '<div class="ticket">' +
+      (Ticket.logoImp() ? '<div class="c"><img src="' + Ticket.logoImp() + '" style="max-width:50%;height:auto;margin-bottom:4px"></div>' : '') +
+      '<div class="c b" style="font-size:13px;letter-spacing:.08em">HISTORIAL ALIMENTACIÓN</div>' +
+      '<div class="c tk-sub">' + Util.date(h.desde) + (h.hasta!==h.desde ? ' a ' + Util.date(h.hasta) : '') + '</div>' +
+      line +
+      '<table><tr><td>Registros</td><td class="r b">' + filtrados.length + '</td></tr>' +
+      '<tr><td class="b">Costo total</td><td class="r b">' + Util.money(costoTotal,false) + '</td></tr></table>' +
+      line +
+      '<table>' + filas + '</table>' +
+      line +
+      '<div class="c" style="font-size:9px">Impreso ' + Util.dt(Util.now()) + ' · ' + Util.esc((Auth.user||{}).nombre||'') + '</div>' +
+      '</div>';
+    UI.modal({title:'Historial de alimentación', size:'sm',
+      body:'<div class="ticket-frame">' + cuerpo + '</div>',
+      footer:'<button class="btn" data-close>Cerrar</button>' +
+        '<button class="btn gold" id="alHistTk">' + Util.ico('print') + ' Imprimir</button>',
+      onMount(ov){
+        ov.querySelector('#alHistTk').onclick = () => {
+          DB.log('alimentacion:historial', h.desde + ' a ' + h.hasta + ' · ' + filtrados.length + ' registros');
+          const anchoOriginal = c.ticket;
+          c.ticket = '80';
+          UI.imprimir(ov);
+          c.ticket = anchoOriginal;
+        };
+      }});
   },
 
   /** Anular devuelve la porción y deja a la persona habilitada de nuevo. */
@@ -8329,11 +9299,38 @@ Views.cash = {
     const ingresos = c.movs.filter(m=>m.tipo==='ingreso').reduce((a,m)=>a+m.monto,0);
     const egresos = c.movs.filter(m=>m.tipo==='egreso').reduce((a,m)=>a+m.monto,0);
     const esperado = c.base + total + ingresos + egresos;
-    return {ventas, porMetodo, efectivoVentas, transferencias, otrosMedios, ingresos, egresos, esperado, total};
+    /* INTERVENCIÓN (corrección de raíz): "egresos" solo suma los gastos
+       pagados en Efectivo, porque son los únicos que de verdad mueven el
+       cajón físico — eso está bien para el arqueo (esperado). Pero el
+       resumen impreso venía usando ese mismo "egresos" como si fuera
+       "el total de gastos del turno", y los gastos pagados por
+       Transferencia nunca se registran en c.movs, así que quedaban
+       invisibles ahí. Se agrega "gastosTotal", tomado directo de
+       DB.d.gastos (la fuente real, ya persistida) para TODO el turno,
+       sin importar la forma de pago — este es el valor que deben usar
+       el resumen, el PDF y los reportes. */
+    const gastosTotal = (DB.d.gastos||[])
+      .filter(g => g.fecha >= c.apertura && (!c.cierre || g.fecha <= c.cierre))
+      .reduce((a,g)=>a+(Number(g.valor)||0), 0);
+    return {ventas, porMetodo, efectivoVentas, transferencias, otrosMedios, ingresos, egresos, esperado, total, gastosTotal};
   },
   html(){
     const c = DB.openCash();
-    const hist = DB.d.cash.filter(x=>x.estado==='cerrada').slice(-12).reverse();
+    const cerradas = DB.d.cash.filter(x=>x.estado==='cerrada');
+    /* INTERVENCIÓN: filtro de "Cierres anteriores" por fecha y por
+       empleado. Sin filtros se conserva exactamente el comportamiento
+       de siempre (últimos 12 cierres); con algún filtro activo se
+       busca en todo el historial. */
+    const filtro = this._filtroCierres || (this._filtroCierres = {fecha:'', userId:''});
+    const filtroActivo = !!(filtro.fecha || filtro.userId);
+    const hist = filtroActivo
+      ? cerradas.filter(x =>
+          (!filtro.fecha || (x.cierre||x.apertura||'').slice(0,10) === filtro.fecha) &&
+          (!filtro.userId || x.userId === filtro.userId)
+        ).slice().reverse()
+      : cerradas.slice(-12).reverse();
+    const empleadosCierres = Array.from(new Set(cerradas.map(x=>x.userId)))
+      .map(id => DB.user(id)).filter(Boolean);
     let cur = '';
     if (c){
       const t = this.totals(c);
@@ -8346,7 +9343,12 @@ Views.cash = {
           '<div class="card pad0"><div class="card-h"><h3>Desglose por medio de pago</h3></div><div style="padding:16px">' +
             (Object.keys(t.porMetodo).length ? Chart.donut(Object.entries(t.porMetodo).sort((a,b)=>b[1]-a[1]))
               : UI.empty('Aún sin cobros','Los medios de pago se agrupan al cobrar.')) + '</div></div>' +
-          '<div class="card pad0"><div class="card-h"><h3>Movimientos del turno</h3></div>' +
+          '<div class="card pad0"><div class="card-h" style="justify-content:space-between">' +
+            '<h3>Movimientos del turno</h3>' +
+            /* INTERVENCIÓN: exportar los movimientos del turno como ticket
+               térmico de 80&nbsp;mm (vertical), listo para imprimir. */
+            (c.movs.length ? '<button class="btn sm ghost" id="cash-mov-pdf">' + Util.ico('print') + ' Exportar PDF</button>' : '') +
+          '</div>' +
             UI.table([{t:'Hora'},{t:'Concepto'},{t:'Tipo'},{t:'Monto',n:1},{t:'',n:1}],
               c.movs.slice().reverse().map(m=>'<tr><td>' + Util.time(m.fecha) + '</td><td>' + Util.esc(m.concepto) + '</td>' +
                 '<td><span class="badge ' + (m.tipo==='venta'?'ok':m.tipo==='ingreso'?'info':'bad') + '">' + m.tipo + '</span></td>' +
@@ -8361,18 +9363,39 @@ Views.cash = {
         '<button class="btn gold" data-act="open">Abrir caja</button>') + '</div>';
     }
     return '<div class="view-head"><div><div class="eyebrow">Turno y arqueo</div><h2>Caja</h2></div>' +
-      (c ? '<span class="pill right"><span class="dot on"></span>Turno de ' + Util.esc((DB.user(c.userId)||{}).nombre||'—') + '</span>' : '') + '</div>' +
+      (c ? '<span class="pill right"><span class="dot on"></span>Turno de ' + Util.esc((DB.user(c.userId)||{}).nombre||'—') + '</span>' +
+        /* INTERVENCIÓN: "Resumen de Turno" — botón amarillo (mismo estilo
+           .btn.gold usado en toda la app, p. ej. "Abrir caja"/"Cobrar")
+           para imprimir solo el resumen totalizado del turno en 80 mm. */
+        '<button class="btn gold" id="cash-resumen-turno" style="margin-left:8px">' + Util.ico('print') + ' Resumen de Turno</button>'
+        : '') + '</div>' +
       cur +
-      '<div class="card pad0" style="margin-top:14px"><div class="card-h"><h3>Cierres anteriores</h3></div>' +
-        UI.table([{t:'Apertura'},{t:'Cierre'},{t:'Responsable'},{t:'Esperado',n:1},{t:'Contado',n:1},{t:'Diferencia',n:1}],
+      /* INTERVENCIÓN: filtro de cierres por fecha y por empleado, con
+         opción de imprimir el resumen de cualquier cierre encontrado. */
+      '<div class="card pad0" style="margin-top:14px">' +
+        '<div class="card-h" style="justify-content:space-between;flex-wrap:wrap;gap:8px">' +
+          '<h3>Cierres anteriores</h3>' +
+          '<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">' +
+            '<input class="inp" type="date" id="cf-fecha" value="' + Util.esc(filtro.fecha) + '" style="max-width:150px" title="Filtrar por fecha de cierre">' +
+            '<select class="inp" id="cf-user" style="max-width:180px" title="Filtrar por empleado">' +
+              '<option value="">Todos los empleados</option>' +
+              empleadosCierres.map(u => '<option value="' + u.id + '"' + (filtro.userId===u.id?' selected':'') + '>' + Util.esc(u.nombre) + '</option>').join('') +
+            '</select>' +
+            (filtroActivo ? '<button class="btn sm ghost" id="cf-limpiar">Limpiar filtro</button>' : '') +
+          '</div>' +
+        '</div>' +
+        (filtroActivo ? '<div class="dim" style="padding:8px 16px 0;font-size:12px">' + hist.length + ' cierre(s) encontrado(s)</div>' : '') +
+        UI.table([{t:'Apertura'},{t:'Cierre'},{t:'Responsable'},{t:'Esperado',n:1},{t:'Contado',n:1},{t:'Diferencia',n:1},{t:'',n:1}],
           hist.map(x=>{
             const dif = (x.contado||0) - (x.esperado||0);
             return '<tr><td>' + Util.dt(x.apertura) + '</td><td>' + Util.dt(x.cierre) + '</td>' +
               '<td>' + Util.esc((DB.user(x.userId)||{}).nombre||'—') + '</td>' +
               '<td class="n">' + Util.money(x.esperado) + '</td><td class="n">' + Util.money(x.contado) + '</td>' +
               '<td class="n"><span class="badge ' + (dif===0?'ok':Math.abs(dif)<5000?'warn':'bad') + '">' +
-              (dif>0?'+':'') + Util.money(dif) + '</span></td></tr>';
-          }), {emptyTitle:'Sin cierres registrados', emptyMsg:'El historial de arqueos aparecerá aquí.'}) + '</div>';
+              (dif>0?'+':'') + Util.money(dif) + '</span></td>' +
+              '<td class="n"><button class="btn sm ghost" data-cierre-resumen="' + x.id + '" title="Ver / imprimir resumen de este cierre">' + Util.ico('print') + '</button></td></tr>';
+          }), {emptyTitle: filtroActivo ? 'Sin cierres para ese filtro' : 'Sin cierres registrados',
+               emptyMsg: filtroActivo ? 'Prueba con otra fecha o empleado.' : 'El historial de arqueos aparecerá aquí.'}) + '</div>';
   },
   mount(){
     document.querySelectorAll('[data-act]').forEach(b => b.onclick = () => {
@@ -8382,6 +9405,182 @@ Views.cash = {
       if (a === 'close') this.close();
     });
     document.querySelectorAll('[data-mdel]').forEach(b => b.onclick = () => this.delMov(b.dataset.mdel));
+    const btnPdf = document.getElementById('cash-mov-pdf');
+    if (btnPdf) btnPdf.onclick = () => this.exportarMovimientosPDF();
+    const btnResumen = document.getElementById('cash-resumen-turno');
+    if (btnResumen) btnResumen.onclick = () => this.resumenTurno();
+    /* INTERVENCIÓN: filtro de "Cierres anteriores" por fecha y empleado */
+    const fFecha = document.getElementById('cf-fecha');
+    if (fFecha) fFecha.onchange = () => { this._filtroCierres.fecha = fFecha.value||''; Router.render(); };
+    const fUser = document.getElementById('cf-user');
+    if (fUser) fUser.onchange = () => { this._filtroCierres.userId = fUser.value||''; Router.render(); };
+    const fLimpiar = document.getElementById('cf-limpiar');
+    if (fLimpiar) fLimpiar.onclick = () => { this._filtroCierres = {fecha:'', userId:''}; Router.render(); };
+    document.querySelectorAll('[data-cierre-resumen]').forEach(b => b.onclick = () => this.resumenCierre(b.dataset.cierreResumen));
+  },
+  /** INTERVENCIÓN: exporta los "Movimientos del turno" como un ticket
+      térmico de 80 mm, con toda la información en sentido vertical
+      (una debajo de otra), listo para imprimir en la impresora térmica
+      preestablecida — o "Guardar como PDF" desde el mismo diálogo de
+      impresión del navegador. Se reutiliza tal cual el mecanismo de
+      impresión ya probado de la aplicación (UI.imprimir), forzando el
+      ancho de página a 80 mm solo para este documento sin alterar la
+      configuración general de impresión del negocio. */
+  exportarMovimientosPDF(){
+    const c = DB.openCash(); if (!c) return;
+    const cfg = DB.d.config;
+    const t = this.totals(c);
+    const movs = c.movs.slice().reverse();
+    const TIPOS = {venta:'VENTA', ingreso:'INGRESO', egreso:'EGRESO'};
+    const filas = movs.map(m =>
+      '<div style="margin-bottom:6px">' +
+        '<div>' + Util.time(m.fecha) + ' · <b>' + (TIPOS[m.tipo]||m.tipo.toUpperCase()) + '</b></div>' +
+        '<div>' + Util.esc(m.concepto) + (m.metodo ? ' (' + Util.esc(m.metodo) + ')' : '') + '</div>' +
+        '<div class="r b">' + Util.money(m.monto) + '</div>' +
+      '</div>'
+    ).join('<hr>');
+
+    const cuerpo =
+      '<div class="ticket">' +
+      (Ticket.logoImp() ? '<div class="c"><img src="' + Ticket.logoImp() + '" style="max-width:55%;height:auto;margin-bottom:4px"></div>' : '') +
+      '<div class="c b lg">' + Util.esc((cfg.empresa||'').toUpperCase()) + '</div>' +
+      '<div class="c" style="font-size:10px">' + Util.esc(cfg.dir||'') + ' · Tel: ' + Util.esc(cfg.tel||'') + '</div>' +
+      '<hr>' +
+      '<div class="c b" style="font-size:14px;letter-spacing:.08em">MOVIMIENTOS DE CAJA</div>' +
+      '<div class="c tk-sub">Turno de ' + Util.esc((DB.user(c.userId)||{}).nombre||'—') + '</div>' +
+      '<hr>' +
+      '<div>Apertura: ' + Util.dt(c.apertura) + '</div>' +
+      '<div>Impreso: ' + Util.dt(Util.now()) + '</div>' +
+      '<div>Base inicial: <b>' + Util.money(c.base) + '</b></div>' +
+      '<hr>' +
+      '<div class="c b" style="margin-bottom:4px">DETALLE</div>' +
+      (filas || '<div class="c dim">Sin movimientos registrados</div>') +
+      '<hr>' +
+      '<div class="c b" style="margin-bottom:4px">RESUMEN DEL TURNO</div>' +
+      '<div>Ventas del turno (' + t.ventas.length + ')<div class="r b">' + Util.money(t.total) + '</div></div>' +
+      '<div style="margin-top:4px">· Efectivo<div class="r">' + Util.money(t.efectivoVentas) + '</div></div>' +
+      '<div>· Transferencias<div class="r">' + Util.money(t.transferencias) + '</div></div>' +
+      (t.otrosMedios ? '<div>· Otros medios<div class="r">' + Util.money(t.otrosMedios) + '</div></div>' : '') +
+      '<div style="margin-top:4px">Ingresos manuales<div class="r">' + Util.money(t.ingresos) + '</div></div>' +
+      '<div>Egresos / gastos<div class="r">' + Util.money(t.egresos) + '</div></div>' +
+      '<hr>' +
+      '<div class="b" style="font-size:13px">TOTAL ESPERADO EN CAJA<div class="r" style="font-size:15px">' + Util.money(t.esperado) + '</div></div>' +
+      '<hr>' +
+      '<div class="c" style="font-size:10px">Documento interno de control de caja</div>' +
+      '</div>';
+
+    const close = UI.modal({
+      title:'Movimientos del turno', size:'sm',
+      body:'<div class="ticket-frame">' + cuerpo + '</div>',
+      footer:'<button class="btn" data-close>Cerrar</button>' +
+        '<button class="btn gold" id="cmp-print">' + Util.ico('print') + ' Imprimir / Exportar PDF</button>',
+      onMount(ov){
+        ov.querySelector('#cmp-print').onclick = () => {
+          DB.log('caja:exportar-movimientos', c.movs.length + ' movimientos · turno ' + c.id, c.id);
+          /* Se fuerza el formato a 80 mm únicamente para esta impresión,
+             sin modificar la configuración general de tickets del
+             negocio (se restaura de inmediato tras llamar a imprimir). */
+          const anchoOriginal = cfg.ticket;
+          cfg.ticket = '80';
+          UI.imprimir(ov);
+          cfg.ticket = anchoOriginal;
+        };
+      }
+    });
+  },
+  /** INTERVENCIÓN: "Resumen de Turno" — ticket corporativo de 80 mm con
+      SOLO el consolidado del turno (Base inicial + Ventas del turno,
+      desglosadas en Efectivo y Transferencias + Gastos), sin el detalle
+      de cada transacción, para una entrega clara, ordenada y rápida de
+      leer. Reutiliza this.totals(c), el mismo cálculo que ya usan los
+      KPIs y el cierre de caja, así que nunca puede quedar descuadrado
+      frente a lo que la app muestra en pantalla. */
+  resumenTurno(){
+    const c = DB.openCash(); if (!c) return;
+    this._mostrarResumen(c, this.totals(c), 'RESUMEN DE TURNO');
+  },
+  /** INTERVENCIÓN: mismo resumen corporativo de 80&nbsp;mm, pero para un
+      cierre de caja YA CERRADO (histórico), buscado por fecha/empleado
+      en "Cierres anteriores". Reutiliza exactamente el mismo cálculo
+      (this.totals) y el mismo formato de impresión que "Resumen de
+      Turno", así ambos documentos siempre coinciden en su lógica. */
+  resumenCierre(cierreId){
+    const c = (DB.d.cash||[]).find(x => x.id === cierreId);
+    if (!c) return UI.toast('No se encontró ese cierre de caja.','warn');
+    this._mostrarResumen(c, this.totals(c), 'RESUMEN DE CIERRE');
+  },
+  /** Construye e imprime el ticket de resumen (compartido por
+      resumenTurno y resumenCierre) a partir de una caja (abierta o ya
+      cerrada) y sus totales ya calculados. */
+  _mostrarResumen(c, t, titulo){
+    const cfg = DB.d.config;
+    /* INTERVENCIÓN (corrección de raíz): usar el total real de gastos
+       del turno (t.gastosTotal, tomado de DB.d.gastos — efectivo +
+       transferencia), no solo los egresos en efectivo de c.movs. */
+    const egresos = t.gastosTotal || 0;
+    const totalCaja = t.total - egresos;
+
+    const linea = (label, valor, opts) => {
+      opts = opts || {};
+      return '<div style="display:flex;justify-content:space-between;gap:10px;margin:' + (opts.mt||'3px') + ' 0;' +
+        (opts.grande ? 'font-size:14px;font-weight:800' : 'font-size:12px') +
+        (opts.indent ? ';padding-left:12px;color:#333' : '') + '">' +
+        '<span>' + label + '</span><b style="font-family:var(--mono)">' + Util.money(valor) + '</b></div>';
+    };
+
+    const cuerpo =
+      '<div class="ticket">' +
+      (Ticket.logoImp() ? '<div class="c"><img src="' + Ticket.logoImp() + '" style="max-width:55%;height:auto;margin-bottom:4px"></div>' : '') +
+      '<div class="c b lg">' + Util.esc((cfg.empresa||'').toUpperCase()) + '</div>' +
+      '<div class="c" style="font-size:10px">' + Util.esc(cfg.dir||'') + ' · Tel: ' + Util.esc(cfg.tel||'') + '</div>' +
+      '<hr>' +
+      '<div class="c b" style="font-size:14px;letter-spacing:.08em">' + Util.esc(titulo) + '</div>' +
+      '<div class="c tk-sub">' + Util.esc((DB.user(c.userId)||{}).nombre||'—') + '</div>' +
+      '<hr>' +
+      '<div>Apertura: ' + Util.dt(c.apertura) + '</div>' +
+      (c.cierre ? '<div>Cierre: ' + Util.dt(c.cierre) + '</div>' : '') +
+      '<div>Impreso: ' + Util.dt(Util.now()) + '</div>' +
+      '<hr>' +
+      /* INTERVENCIÓN: la Base inicial queda solo como referencia arriba
+         (no se suma en el totalizado de abajo). */
+      linea('Base inicial', c.base, {grande:false}) +
+      '<hr>' +
+      '<div class="b" style="margin-top:2px">Ventas del turno (' + t.ventas.length + ' facturas)</div>' +
+      linea('· Efectivo', t.efectivoVentas, {indent:true}) +
+      linea('· Transferencias', t.transferencias, {indent:true}) +
+      (t.otrosMedios ? linea('· Otros medios', t.otrosMedios, {indent:true}) : '') +
+      linea('Total ventas', t.total, {grande:false, mt:'6px'}) +
+      '<hr>' +
+      linea('(−) Gastos', -egresos) +
+      '<hr>' +
+      /* INTERVENCIÓN: se aclara el rótulo y se agrega, aparte, el
+         efectivo realmente esperado en caja (con base + ingresos), para
+         que este total —que a propósito NO incluye base ni ingresos
+         manuales— no se confunda con el dinero físico que debe haber en
+         el cajón. Esa cifra completa la calcula igual "Cerrar Caja". */
+      linea('TOTAL FACTURADO (neto de gastos)', totalCaja, {grande:true, mt:'6px'}) +
+      '<hr>' +
+      '<div style="font-size:10px;margin-top:2px">Este total NO incluye la Base inicial ni Ingresos manuales.</div>' +
+      '<div style="font-size:11px;font-weight:700;margin-top:3px">Efectivo esperado en el cajón (con base): ' + Util.money(t.esperado) + '</div>' +
+      '<hr>' +
+      '<div class="c" style="font-size:10px;margin-top:4px">Resumen totalizado — no incluye el detalle<br>de cada transacción</div>' +
+      '</div>';
+
+    UI.modal({
+      title: titulo === 'RESUMEN DE CIERRE' ? 'Resumen de cierre' : 'Resumen de turno', size:'sm',
+      body:'<div class="ticket-frame">' + cuerpo + '</div>',
+      footer:'<button class="btn" data-close>Cerrar</button>' +
+        '<button class="btn gold" id="crt-print">' + Util.ico('print') + ' Imprimir resumen</button>',
+      onMount(ov){
+        ov.querySelector('#crt-print').onclick = () => {
+          DB.log('caja:resumen', titulo + ' · Total facturado neto ' + Util.money(totalCaja) + ' · Esperado con base ' + Util.money(t.esperado), c.id);
+          const anchoOriginal = cfg.ticket;
+          cfg.ticket = '80';
+          UI.imprimir(ov);
+          cfg.ticket = anchoOriginal;
+        };
+      }
+    });
   },
   /** Elimina un ingreso o egreso manual. Las líneas de venta no se tocan aquí:
       para revertir una venta se anula la factura, que devuelve inventario y dinero. */
@@ -8435,9 +9634,14 @@ Views.cash = {
         close(); UI.toast('Movimiento registrado.','ok'); Router.render();
       }});
   },
-  close(){
+  async close(){
     const c = DB.openCash(); if(!c) return;
     if (!Auth.can('cerrarcaja')) return UI.toast('Tu rol no puede cerrar la caja.','warn');
+    /* INTERVENCIÓN: antes de abrir el arqueo, se confirma que ya se
+       imprimió el Resumen del Turno, para que no se cierre la caja sin
+       dejar ese respaldo impreso. */
+    if (!(await UI.confirm('Usted cerrará la Caja, ¿realizó la impresión del Resumen del Turno?',
+      {ok:'Sí, continuar con el cierre'}))) return;
     const t = this.totals(c);
     UI.formModal({title:'Arqueo y cierre de caja', ok:'Cerrar turno',
       extra:'<div class="card" style="margin-top:12px">' +
@@ -8454,7 +9658,12 @@ Views.cash = {
         '<div class="tot-row" style="padding-left:14px;font-size:13px;color:var(--ash)"><span>· Transferencias</span><b>' + Util.money(t.transferencias) + '</b></div>' +
         (t.otrosMedios ? '<div class="tot-row" style="padding-left:14px;font-size:13px;color:var(--ash)"><span>· Otros medios</span><b>' + Util.money(t.otrosMedios) + '</b></div>' : '') +
         (t.ingresos ? '<div class="tot-row"><span>Otros ingresos</span><b>' + Util.money(t.ingresos) + '</b></div>' : '') +
-        '<div class="tot-row"><span>Egresos</span><b>' + Util.money(t.egresos) + '</b></div>' +
+        '<div class="tot-row"><span>Egresos en efectivo (afectan el cajón)</span><b>' + Util.money(t.egresos) + '</b></div>' +
+        /* INTERVENCIÓN: se muestra aparte el total REAL de gastos del
+           turno (efectivo + transferencia, tomado de DB.d.gastos), para
+           que quede visible aunque no todos afecten el efectivo físico
+           del cajón — sin alterar el cálculo de "Total esperado". */
+        '<div class="tot-row"><span>Gastos totales del turno (todo medio de pago)</span><b>' + Util.money(t.gastosTotal) + '</b></div>' +
         '<div class="tot-grand"><span>Total esperado</span><b>' + Util.money(t.esperado) + '</b></div></div>',
       fields:[{k:'contado', label:'Total contado (efectivo + transferencias)', type:'number', val:t.esperado, min:0, req:true, full:true},
               {k:'nota', label:'Observación del cierre', type:'textarea', val:'', full:true}],
@@ -8482,7 +9691,7 @@ const Reports = {
       {k:'impuesto',t:'Impuesto',n:1,f:'$'},{k:'propina',t:'Propina',n:1,f:'$'},
       {k:'domicilio',t:'Domicilio',n:1,f:'$'},{k:'entrega',t:'Entrega'},{k:'total',t:'Total',n:1,f:'$'},
       {k:'metodos',t:'Pago'},{k:'estado',t:'Estado'}],
-      build(v){ return v.map(s=>({numero:s.numero, fecha:s.fecha, usuario:(DB.user(s.userId)||{}).nombre||'—',
+      build(v){ return v.map(s=>({id:s.id, numero:s.numero, fecha:s.fecha, usuario:(DB.user(s.userId)||{}).nombre||'—',
         cliente:(DB.client(s.clienteId)||{}).nombre||'—', items:s.items.reduce((a,i)=>a+i.qty,0),
         subtotal:s.subtotal, descuento:s.descuento, impuesto:s.impuesto, propina:s.propina,
         domicilio:s.domicilio||0, entrega:(POS.TIPOS[s.tipo||'mesa']||{}).corto||'Mesa', total:s.total,
@@ -8840,6 +10049,83 @@ const Reports = {
         '</table><div style="font-size:10px;color:#777;margin-top:12px">' + data.length + ' registros · ' + Util.esc(c.sede) + '</div></div>',
       footer:'<button class="btn" data-close>Cerrar</button><button class="btn gold" id="pp">' + Util.ico('print') + ' Imprimir o guardar PDF</button>',
       onMount(ov){ ov.querySelector('#pp').onclick = () => { DB.log('reporte:pdf', def.t); UI.imprimir(ov); }; }});
+  },
+
+  /** INTERVENCIÓN: seleccionar una factura del reporte de Ventas para
+      editarla, eliminarla o reimprimirla — protegido con la clave de
+      un administrador, tal como pide la lógica de autorizaciones que ya
+      usa el resto de la aplicación (Auth.autorizar). */
+  async editarVenta(ventaId){
+    const s = (DB.d.sales||[]).find(x => x.id === ventaId);
+    if (!s) return UI.toast('No se encontró esa factura.','warn');
+    const autorizo = await Auth.autorizar('Editar o eliminar la factura ' + s.numero,
+      (DB.client(s.clienteId)||{}).nombre + ' · ' + Util.money(s.total));
+    if (!autorizo) return;
+
+    const recalcular = (box) => {
+      const num = id => Number(box.querySelector('#' + id).value) || 0;
+      const total = num('rvSub') - num('rvDesc') + num('rvImp') + num('rvProp') + num('rvDom');
+      box.querySelector('#rvTotal').textContent = Util.money(Math.max(0, total));
+    };
+
+    const close = UI.modal({
+      title:'Factura ' + s.numero, size:'sm',
+      body:'<div id="rvBox">' +
+        '<div class="dim" style="font-size:12px;margin-bottom:10px">' + Util.dt(s.fecha) + ' · ' +
+          Util.esc((DB.client(s.clienteId)||{}).nombre||'—') + ' · atendió ' + Util.esc((DB.user(s.userId)||{}).nombre||'—') +
+        '</div>' +
+        '<div class="grid g-form">' +
+          '<label class="f">Subtotal<input class="inp num" type="number" id="rvSub" value="' + (s.subtotal||0) + '"></label>' +
+          '<label class="f">Descuento<input class="inp num" type="number" id="rvDesc" value="' + (s.descuento||0) + '"></label>' +
+          '<label class="f">Impuesto<input class="inp num" type="number" id="rvImp" value="' + (s.impuesto||0) + '"></label>' +
+          '<label class="f">Propina<input class="inp num" type="number" id="rvProp" value="' + (s.propina||0) + '"></label>' +
+          '<label class="f">Domicilio<input class="inp num" type="number" id="rvDom" value="' + (s.domicilio||0) + '"></label>' +
+          '<label class="f">Estado<select class="inp" id="rvEstado">' +
+            ['pagada','pendiente','anulada'].map(e=>'<option value="'+e+'"'+(s.estado===e?' selected':'')+'>'+e+'</option>').join('') +
+          '</select></label>' +
+        '</div>' +
+        '<label class="f" style="margin-top:10px">Nota<input class="inp" id="rvNota" value="' + Util.esc(s.nota||'') + '"></label>' +
+        '<div class="tot-grand" style="margin-top:12px"><span>Nuevo total</span><b id="rvTotal">' + Util.money(s.total) + '</b></div>' +
+        '<div class="dim" style="font-size:11px;margin-top:8px">Corrige aquí valores o la comanda en caso de un error de digitación. ' +
+        'Los ítems del pedido se muestran en la comanda impresa; para cambiarlos, anula esta factura y registra el pedido de nuevo.</div>' +
+      '</div>',
+      footer:'<button class="btn" data-close>Cancelar</button>' +
+        '<button class="btn" id="rvImprimir">' + Util.ico('print') + ' Imprimir</button>' +
+        '<button class="btn" id="rvEliminar" style="color:var(--ember-hi)">' + Util.ico('trash') + ' Eliminar factura</button>' +
+        '<button class="btn pri" id="rvGuardar">' + Util.ico('chk') + ' Guardar cambios</button>',
+      onMount(ov){
+        const box = ov.querySelector('#rvBox');
+        box.querySelectorAll('input[type="number"]').forEach(inp => inp.oninput = () => recalcular(box));
+        ov.querySelector('#rvImprimir').onclick = () => { DB.log('reporte:venta-imprimir', s.numero, s.id); Ticket.open(s.id); };
+        ov.querySelector('#rvGuardar').onclick = () => {
+          const num = id => Number(box.querySelector('#' + id).value) || 0;
+          s.subtotal = num('rvSub'); s.descuento = num('rvDesc'); s.impuesto = num('rvImp');
+          s.propina = num('rvProp'); s.domicilio = num('rvDom');
+          s.total = Math.max(0, s.subtotal - s.descuento + s.impuesto + s.propina + s.domicilio);
+          s.estado = box.querySelector('#rvEstado').value;
+          s.nota = box.querySelector('#rvNota').value || '';
+          s.act = Util.now();
+          DB.touch('sales');
+          DB.log('reporte:venta-editar', s.numero + ' · nuevo total ' + Util.money(s.total) + ' · autorizó ' + autorizo.nombre, s.id);
+          Sync.enqueue('sales','update', s);
+          UI.toast('Factura ' + s.numero + ' actualizada.','ok');
+          close();
+          Router.render();
+        };
+        ov.querySelector('#rvEliminar').onclick = async () => {
+          if (!(await UI.confirm('Se eliminará por completo la factura ' + s.numero + ' del sistema. ' +
+            'Esta acción no revierte automáticamente el inventario ni los movimientos de caja ya generados por ella.',
+            {ok:'Eliminar factura', danger:true}))) return;
+          DB.d.sales = DB.d.sales.filter(x => x.id !== s.id);
+          DB.touch('sales');
+          DB.log('reporte:venta-eliminar', s.numero + ' · ' + Util.money(s.total) + ' · autorizó ' + autorizo.nombre, s.id);
+          Sync.enqueue('sales','delete', {id:s.id});
+          UI.toast('Factura ' + s.numero + ' eliminada del sistema.','ok');
+          close();
+          Router.render();
+        };
+      }
+    });
   }
 };
 Views.reports = {
@@ -8852,7 +10138,17 @@ Views.reports = {
     const t = Metrics.totals(ventas);
     const util = t.total - t.imp - t.prop - t.dom - t.costo;
     const TOPE = 300;
-    const rows = data.slice(0, TOPE).map(r => '<tr>' + def.cols.map(c =>
+    /* INTERVENCIÓN: en la sección Ventas, el orden pasa a mostrar primero
+       el registro más reciente y va desplazándose hacia atrás (de más
+       reciente a menos reciente); así, al recortar a las primeras 300
+       filas para la pantalla, son siempre las más recientes las que se
+       ven, no las más viejas. Los demás reportes (agregados por
+       producto/cliente/etc.) no se tocan. */
+    const dataOrdenada = f.tipo === 'ventas' ? data.slice().reverse() : data;
+    const esVentas = f.tipo === 'ventas';
+    const rows = dataOrdenada.slice(0, TOPE).map(r => '<tr' +
+      (esVentas ? ' style="cursor:pointer" data-venta-id="' + r.id + '" title="Seleccionar para editar o eliminar (requiere clave de administrador)"' : '') +
+      '>' + def.cols.map(c =>
       '<td class="' + (c.n?'n':'') + '">' + Util.esc(Reports.fmt(r[c.k], c.f)) + '</td>').join('') + '</tr>');
     // El pie suma siempre el periodo completo, aunque en pantalla se corten filas
     const tot = Reports.totales(def, data);
@@ -8878,7 +10174,8 @@ Views.reports = {
       '</div>' +
       '<div class="card pad0"><div class="card-h"><h3>' + def.t + '</h3>' +
         '<span class="dim right" style="font-size:11px">' +
-          (data.length > TOPE ? 'mostrando ' + TOPE + ' de ' + data.length : data.length + ' registros') + '</span></div>' +
+          (data.length > TOPE ? 'mostrando ' + TOPE + ' de ' + data.length : data.length + ' registros') +
+          (esVentas ? ' · toca una factura para editarla' : '') + '</span></div>' +
         UI.table(def.cols, rows, {emptyTitle:'Sin datos en el periodo', emptyMsg:'Amplía el rango de fechas o cambia de reporte.'}) +
         (data.length > TOPE ? '<div style="padding:11px 14px;border-top:1px solid var(--line-soft)" class="dim">' +
           'Se muestran las ' + TOPE + ' filas más recientes para que la pantalla siga siendo ágil. ' +
@@ -8903,6 +10200,10 @@ Views.reports = {
       if (b.dataset.x === 'xls') Reports.xls(State.filters.rep.tipo, raw, def.cols);
       if (b.dataset.x === 'pdf') Reports.pdf();
     });
+    /* INTERVENCIÓN: seleccionar una factura del reporte de Ventas para
+       editarla o eliminarla, protegido con clave de administrador. */
+    document.querySelectorAll('[data-venta-id]').forEach(tr =>
+      tr.onclick = () => Reports.editarVenta(tr.dataset.ventaId));
   }
 };
 
@@ -8953,7 +10254,7 @@ Views.sync = {
             '<div class="grow" style="min-width:200px">' +
               '<div class="eyebrow" style="margin-bottom:8px">Agregar una tablet o un celular</div>' +
               '<ol class="pasos-n">' +
-                '<li>Conecta el aparato al WiFi del restaurante.</li>' +
+                '<li>Abre la cámara y apunta al código de al lado.</li>' +
                 '<li>Abre la cámara y apunta al código de al lado.</li>' +
                 '<li>Toca la dirección que aparece y sigue el asistente.</li>' +
               '</ol>' +
@@ -8966,12 +10267,9 @@ Views.sync = {
         :
         '<div class="card" style="margin-bottom:14px">' +
           '<div class="eyebrow" style="margin-bottom:9px">Trabajar con varios equipos</div>' +
-          '<p style="font-size:13.5px;line-height:1.6">Para que los meseros manden comandas desde sus tablets y la cocina ' +
-            'las vea aparecer, hace falta un equipo que haga de servidor en el WiFi del local. ' +
-            'La guía de instalación explica cómo dejarlo andando.</p>' +
-          '<div class="row wrap" style="margin-top:12px;gap:9px">' +
-            '<input class="inp grow" id="sep" placeholder="192.168.1.5:3000" value="' + Util.esc(DB.d.config.endpoint) + '">' +
-            '<button class="btn gold" id="sepSave">Conectar</button></div>' +
+          '<p style="font-size:13.5px;line-height:1.6">Este archivo se abrió por fuera del servidor del restaurante, ' +
+            'así que trabaja solo. Para que los meseros manden comandas y la cocina las vea aparecer, ' +
+            'abre la dirección del restaurante en este aparato: al entrar por ahí queda conectado sin configurar nada.</p>' +
         '</div>') +
 
       '<button class="btn ghost" id="sAvz" style="margin-bottom:10px">' +
@@ -8981,16 +10279,13 @@ Views.sync = {
         '<div class="grid g-kpi" style="margin-bottom:14px">' +
           UI.kpi('Operaciones en cola', String(q.length), 'Se conservan hasta confirmarse') +
           UI.kpi('Ventas sin confirmar', String(DB.d.sales.filter(x=>!x.sync).length), 'Guardadas en este equipo') +
-          UI.kpi('Consulta al servidor', (DB.d.config.pollSeg||5) + ' s', 'Cada cuánto se piden novedades') +
+          UI.kpi('Aviso en vivo', Sync.enVivo ? 'Conectado' : 'Reconectando',
+                 Sync.enVivo ? 'El servidor avisa al instante' : 'Mientras tanto se consulta cada 20 s') +
           UI.kpi('Almacenamiento', Persist.label(), Sync.lastError ? 'Error: ' + Sync.lastError : 'Funcionando') +
         '</div>' +
         '<div class="card" style="margin-bottom:14px">' +
-          '<div class="eyebrow" style="margin-bottom:10px">Dirección del servidor</div>' +
-          '<div class="row wrap"><input class="inp grow" id="sep2" placeholder="192.168.1.5:3000" value="' +
-            Util.esc(DB.d.config.endpoint) + '">' +
-            '<button class="btn" id="sepSave2">Guardar</button>' +
-            '<button class="btn" id="sepTest">Probar</button></div>' +
-          '<div class="row wrap" style="margin-top:12px;gap:9px;padding-top:12px;border-top:1px solid var(--line-soft)">' +
+          '<div class="eyebrow" style="margin-bottom:10px">Puesta en marcha</div>' +
+          '<div class="row wrap" style="gap:9px">' +
             '<button class="btn" id="sPub">Publicar mis datos al servidor</button>' +
             '<button class="btn" id="sJoin">Traer los datos del servidor</button></div>' +
           '<p class="dim" style="font-size:11.5px;margin-top:9px">Publicar se hace una sola vez, desde el equipo que tiene ' +
@@ -9013,26 +10308,6 @@ Views.sync = {
     bind('sAhora', () => Sync.run());
     bind('sAvz', () => { State.filters.syncAvz = !State.filters.syncAvz; Router.render(); });
 
-    const guardar = (campo) => {
-      let v = document.getElementById(campo).value.trim();
-      if (v && !/^https?:\/\//.test(v)) v = 'http://' + v;
-      if (v && !/:\d+/.test(v)) v = v + ':3000';
-      DB.d.config.endpoint = v;
-      DB.touch('config'); Sync.startPolling();
-      UI.toast(v ? 'Servidor guardado.' : 'Este equipo queda trabajando solo.','ok');
-      Router.render();
-    };
-    bind('sepSave', () => guardar('sep'));
-    bind('sepSave2', () => guardar('sep2'));
-    bind('sepTest', async () => {
-      let v = document.getElementById('sep2').value.trim();
-      if (!v) return UI.toast('Escribe primero la dirección.','warn');
-      if (!/^https?:\/\//.test(v)) v = 'http://' + v;
-      const info = await Sync.probar(v, 5000);
-      UI.toast(info ? 'Servidor respondiendo · ' + (info.registros||0) + ' registros'
-                    : 'No hubo respuesta. Revisa que el equipo esté encendido y en el mismo WiFi.',
-               info ? 'ok' : 'bad', 4600);
-    });
     bind('sPub', async () => {
       if (!(await UI.confirm('El servidor tomará la carta, el inventario, los usuarios y el histórico de este equipo ' +
         'como punto de partida. Hazlo una sola vez, desde el equipo de la caja.', {ok:'Publicar'}))) return;
@@ -9073,21 +10348,22 @@ Views.sync = {
     if (!dir) return UI.toast('Este equipo no tiene servidor configurado todavía.','warn');
     UI.modal({
       title:'Agregar una tablet o un celular',
-      body:'<div class="center"><div class="qr-caja">' + QR.svg(dir, {px:230}) + '</div>' +
+      body:'<div id="pdfdoc"><div class="center"><div class="qr-caja">' + QR.svg(dir, {px:230}) + '</div>' +
         '<div class="qr-url" style="margin-top:14px">' + Util.esc(dir.replace(/^https?:\/\//,'')) + '</div></div>' +
         '<ol class="pasos-n" style="margin-top:18px">' +
-          '<li>Conecta el aparato al <b>WiFi del restaurante</b>. Es indispensable: sin la misma red no se ven.</li>' +
           '<li>Abre la <b>cámara</b> del aparato y apúntala al código. Toca el aviso que sale en pantalla.</li>' +
-          '<li>El asistente encuentra el sistema solo. Toca <b>Conectar este equipo</b> y elige para qué se va a usar.</li>' +
+          '<li>Entra con el <b>PIN</b> del mesero. Queda conectado al instante: no hay nada que configurar.</li>' +
           '<li>Para dejarlo como aplicación: menú del navegador → <b>Añadir a pantalla de inicio</b>.</li>' +
+          '<li>Sirve por WiFi o por datos móviles. No hace falta que esté en la red del local.</li>' +
         '</ol>' +
-        '<p class="dim" style="font-size:11.5px">Si la cámara no lee códigos, escribe la dirección de arriba en el navegador.</p>',
+        '<p class="dim" style="font-size:11.5px">Si la cámara no lee códigos, escribe la dirección de arriba en el navegador.</p>' +
+        '</div>',
       footer:'<button class="btn" data-close>Cerrar</button>' +
              '<button class="btn gold" id="qrPrint">' + Util.ico('print') + ' Imprimir el código</button>',
       onMount(ov){
         ov.querySelector('#qrPrint').onclick = () => {
           DB.log('equipo:codigo-impreso', dir);
-          window.print();
+          UI.imprimir(ov);      // solo el código, no la pantalla que hay detrás
         };
       }
     });
@@ -9219,9 +10495,23 @@ Views.cfg = {
         '<div class="row wrap" style="margin-top:12px;gap:9px">' +
           '<button class="btn gold" id="btnInstall" style="display:none">Instalar aplicación</button>' +
           '<button class="btn" id="btnRecargar">' + Util.ico('sync') + ' Buscar actualización</button></div>' +
-        '<p class="dim" style="font-size:11.5px;margin-top:10px">Si cambiaste el archivo en el servidor y este equipo ' +
-          'sigue viendo lo anterior, usa el botón: descarta la copia guardada y vuelve a pedirla. ' +
-          'Tu sesión y el pedido que tengas abierto no se pierden.</p></div>';
+        (function(){
+          // Distingue los dos casos que se confunden todo el tiempo: "no subí el
+          // archivo al servidor" y "la tablet se quedó con la copia vieja".
+          const enServidor = (Equipo.info||{}).appVersion;
+          const desfasado = enServidor && enServidor !== APP_VERSION;
+          return '<div class="row wrap" style="margin-top:12px;gap:18px;padding-top:12px;border-top:1px solid var(--line-soft)">' +
+            '<span class="mut" style="font-size:12px">En este equipo <b class="num">' + APP_VERSION + '</b></span>' +
+            (enServidor ? '<span class="mut" style="font-size:12px">En el servidor <b class="num" style="color:' +
+              (desfasado ? 'var(--ember-hi)' : 'var(--brass-hi)') + '">' + Util.esc(enServidor) + '</b></span>' : '') +
+          '</div>' +
+          (desfasado
+            ? '<p style="font-size:12.5px;margin-top:10px;color:var(--ember-hi)">El servidor ya tiene una versión más nueva. ' +
+              'Toca <b>Buscar actualización</b> en este aparato para traerla.</p>'
+            : '<p class="dim" style="font-size:11.5px;margin-top:10px">Si cambiaste el archivo en el servidor y este equipo ' +
+              'sigue viendo lo anterior, usa el botón: descarta la copia guardada y vuelve a pedirla. ' +
+              'Tu sesión y el pedido que tengas abierto no se pierden.</p>');
+        })() + '</div>';
   },
   mount(){
     document.getElementById('cfgSave').onclick = () => {
@@ -9437,11 +10727,14 @@ const Boot = {
         UI.toast('Sin conexión. Puedes seguir vendiendo: todo queda guardado en el equipo.','warn', 4600);
       }
     };
-    window.addEventListener('online', ()=>upd(true));
+    window.addEventListener('online', ()=>{ upd(true); Sync.escuchar(); });
     window.addEventListener('offline', ()=>upd(false));
     document.addEventListener('visibilitychange', ()=>{
-      if (document.hidden) Sesion.guardarYa();
-      else if (Auth.user) Sync.run(true);
+      if (document.hidden) return Sesion.guardarYa();
+      if (!Auth.user) return;
+      // Al volver de segundo plano el canal suele venir muerto: se rehace.
+      if (!Sync.enVivo) Sync.escuchar();
+      Sync.run(true);
     });
     // En móviles la página se descarta sin avisar: se guarda antes de perderla
     window.addEventListener('pagehide', ()=>Sesion.guardarYa());
