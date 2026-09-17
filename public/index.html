@@ -10,7 +10,7 @@
 <meta name="apple-mobile-web-app-title" content="Jhon Parrilla">
 <!-- Se sube cada vez que se publica un cambio. El servidor la lee y la expone
      en /salud, para comparar de un vistazo qué versión tiene cada tablet. -->
-<meta name="app-version" content="2026.09.12">
+<meta name="app-version" content="2026.09.16">
 <title>Jhon Parrilla · POS</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230C0B0A'/><path d='M7 20h18M7 24h18' stroke='%23A3231C' stroke-width='2.4' stroke-linecap='round'/><path d='M11 8c0 3-3 3-3 6h16c0-3-3-3-3-6' stroke='%23C8A24A' stroke-width='2' fill='none' stroke-linecap='round'/></svg>">
 <style>
@@ -1986,7 +1986,7 @@ DB._flush = Util.debounce(async function(){
    Toda operación es un upsert idempotente: reenviarla no duplica nada.
    Conflictos: gana la escritura con `act` más reciente.
    ------------------------------------------------------------------- */
-const APP_VERSION = '2026.09.12';
+const APP_VERSION = '2026.09.16';
 
 const Sync = {
   running:false, lastAt:null, lastError:null, cursor:null, _poll:null, _fallos:0,
@@ -3063,9 +3063,15 @@ const UI = {
         (f.opts||[]).map(o => '<option value="' + Util.esc(o.v) + '"' + (String(o.v)===String(v)?' selected':'') + '>' + Util.esc(o.t) + '</option>').join('') +
         '</select>';
     else if (f.type === 'check')
-      return '<label class="row" style="gap:9px;cursor:pointer;padding:8px 0">' +
+      // Las casillas no admitían pista; algunas la necesitan para explicar el
+      // matiz de lo que activan. Sin `hint` se pinta exactamente como antes.
+      return '<div' + (f.full ? ' style="grid-column:1/-1"' : '') + '>' +
+        '<label class="row" style="gap:9px;cursor:pointer;padding:8px 0">' +
         '<input type="checkbox" name="' + f.k + '"' + (v ? ' checked':'') + ' style="width:17px;height:17px;accent-color:#A3231C">' +
-        '<span style="font-size:13px">' + Util.esc(f.label) + '</span></label>';
+        '<span style="font-size:13px">' + Util.esc(f.label) + '</span></label>' +
+        (f.hint ? '<span class="dim" style="font-size:10.5px;display:block;margin:-4px 0 6px 26px">' +
+          Util.esc(f.hint) + '</span>' : '') +
+        '</div>';
     else if (f.type === 'glifo'){
       const sel = f.val || '';
       return '<div class="f" style="grid-column:1/-1"><span>' + Util.esc(f.label) + '</span>' +
@@ -7923,9 +7929,24 @@ Views.inv = {
     UI.toast(quitados + ' entradas retiradas. El inventario quedó solo con carnes y bebidas.','ok', 5000);
     Router.render();
   },
-  /** Puerta de administrador para tocar existencias. Crear no la pide: no hay nada que perder. */
+  /** Puerta de administrador para tocar existencias. Crear no la pide: no hay
+      nada que perder.
+
+      El cajero queda exento: es quien recibe la mercancía y cuadra el conteo
+      varias veces al día, y pedirle una clave ajena en cada ajuste solo lleva
+      a que termine usando el perfil del administrador para todo, que es peor.
+      Sigue quedando registrado en la bitácora quién hizo cada movimiento. */
   async permiso(motivo, detalle){
     if (!DB.d.config.claveInventario) return {nombre:(Auth.user||{}).nombre};
+    /* El cajero queda exento, y solo en inventario: es quien recibe la
+       mercancía y cuadra el conteo varias veces al día, y pedirle una clave
+       ajena en cada ajuste acaba en que termine entrando con el perfil del
+       administrador, que es bastante peor.
+
+       Fuera de aquí nada cambia: anular una comida, borrar un gasto, tocar un
+       movimiento de caja, editar una factura o recuperar un respaldo le siguen
+       pidiendo autorización como a todo el mundo. */
+    if ((Auth.user||{}).rol === 'cajero') return {id:Auth.user.id, nombre:Auth.user.nombre};
     return await Auth.autorizar(motivo, detalle);
   },
   async form(id){
@@ -10465,7 +10486,8 @@ Views.cfg = {
           {k:'minutosClave', label:'La clave vale por (min)', type:'number', val:c.minutosClave, min:0,
            hint:'Evita escribirla en cada cambio. 0 la pide siempre'},
           {k:'claveInventario', label:'Pedir clave de administrador para editar, ajustar o eliminar inventario',
-           type:'check', val:c.claveInventario, full:true},
+           type:'check', val:c.claveInventario, full:true,
+           hint:'No se le pide al cajero: su perfil ajusta el inventario sin clave. Queda registrado quién movió cada cosa'},
           {k:'endpoint', label:'Servidor de sincronización', val:c.endpoint, ph:'https://api.jhonparrilla.co'},
           {k:'autoSync', label:'Sincronizar automáticamente al recuperar conexión', type:'check', val:c.autoSync, full:true},
           {k:'respaldoMin', label:'Respaldo automático cada (min)', type:'number', val:c.respaldoMin, min:0,
