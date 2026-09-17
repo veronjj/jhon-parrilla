@@ -10,7 +10,7 @@
 <meta name="apple-mobile-web-app-title" content="Jhon Parrilla">
 <!-- Se sube cada vez que se publica un cambio. El servidor la lee y la expone
      en /salud, para comparar de un vistazo qué versión tiene cada tablet. -->
-<meta name="app-version" content="2026.09.16">
+<meta name="app-version" content="2026.09.17">
 <title>Jhon Parrilla · POS</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230C0B0A'/><path d='M7 20h18M7 24h18' stroke='%23A3231C' stroke-width='2.4' stroke-linecap='round'/><path d='M11 8c0 3-3 3-3 6h16c0-3-3-3-3-6' stroke='%23C8A24A' stroke-width='2' fill='none' stroke-linecap='round'/></svg>">
 <style>
@@ -1986,7 +1986,7 @@ DB._flush = Util.debounce(async function(){
    Toda operación es un upsert idempotente: reenviarla no duplica nada.
    Conflictos: gana la escritura con `act` más reciente.
    ------------------------------------------------------------------- */
-const APP_VERSION = '2026.09.16';
+const APP_VERSION = '2026.09.17';
 
 const Sync = {
   running:false, lastAt:null, lastError:null, cursor:null, _poll:null, _fallos:0,
@@ -2222,7 +2222,7 @@ const Sync = {
 const PERMS = {
   admin:      ['*'],
   supervisor: ['dash','pos','comandas','kds','cobrar','menu','inv','buy','clients','cash','reports','audit','sync','descuento','anular','cerrarcaja','alimentacion','gastos'],
-  cajero:     ['dash','pos','comandas','kds','cobrar','inv','clients','cash','sync','descuento','cerrarcaja','alimentacion','reports','gastos','gastos:add'],
+  cajero:     ['dash','pos','comandas','kds','cobrar','inv','clients','cash','sync','descuento','cerrarcaja','alimentacion','reports','gastos','gastos:add','suspender'],
   mesero:     ['pos','comandas','inv:read','clients'],
   cocina:     ['kds','comandas:read','inv:read']
 };
@@ -6184,7 +6184,9 @@ const Orders = {
     listo:     {t:'Listo',       b:'ok',   sig:'entregado',  accion:'Entregado'},
     entregado: {t:'En mesa',     b:'mut',  sig:null,         accion:null},
     cobrada:   {t:'Cobrada',     b:'ok',   sig:null,         accion:null},
-    cancelada: {t:'Cancelada',   b:'bad',  sig:null,         accion:null}
+    cancelada: {t:'Cancelada',   b:'bad',  sig:null,         accion:null},
+    suspendida:{t:'Suspendida',  b:'warn', sig:null,         accion:null},
+    eliminada: {t:'Eliminada',   b:'mut',  sig:null,         accion:null}
   },
   total(o){ return o.items.reduce((a,i)=>a + (i.precio + ((i.adiciones||[]).reduce((s,x)=>s+(x.precio||0),0)))*i.qty, 0); },
   gramos(o){ return o.items.reduce((a,i)=>a + (i.gramos||0)*i.qty, 0); },
@@ -6208,6 +6210,90 @@ const Orders = {
     if (estado === 'listo') UI.toast('Mesa ' + o.mesa + ' lista para servir.','ok');
     Router.render();
   },
+  /** Aparta una comanda equivocada sin decidir todavía qué hacer con ella.
+
+      Queda fuera de `ABIERTAS`, y de ahí salen solas las tres condiciones que
+      hacen falta: desaparece del módulo de comandas y del KDS, deja de reservar
+      inventario (el descuento real ocurre al cobrar, y esta no se cobra nunca)
+      y no toca la caja. La mesa también queda libre, que es lo correcto si la
+      comanda se mandó por error.
+
+      La suspende el cajero; resolverla es cosa del administrador. */
+  suspender(id){
+    const o = DB.order(id); if (!o) return;
+    if (!Auth.can('suspender'))
+      return UI.toast('Solo caja puede suspender una comanda.','warn');
+    if (!DB.ABIERTAS.includes(o.estado))
+      return UI.toast('Esa comanda ya no está abierta.','warn');
+    const self = this;
+    UI.formModal({
+      title:'Suspender la comanda ' + o.numero, size:'sm', ok:'Suspender',
+      extra:'<p class="dim" style="font-size:12px;line-height:1.55;margin-top:10px">' +
+        'Sale de cocina, libera la mesa ' + Util.esc(o.mesa) + ', y no descuenta inventario ni toca la caja. ' +
+        'El administrador decidirá después si se cancela o se elimina.</p>',
+      fields:[{k:'motivo', label:'Qué pasó (opcional)', val:'', full:true,
+               ph:'Se pidió en la mesa equivocada'}],
+      onSave(d, close){
+        o.estado = 'suspendida';
+        o.suspension = {por:(Auth.user||{}).id, en:Util.now(), motivo:String(d.motivo||'').trim()};
+        o.tiempos = Object.assign({}, o.tiempos, {suspendido:Util.now()});
+        o.act = Util.now();
+        DB.touch('orders');
+        DB.log('comanda:suspender', o.numero + ' · mesa ' + o.mesa + ' · ' + Util.money(self.total(o)) +
+          (o.suspension.motivo ? ' · ' + o.suspension.motivo : ''), o.id);
+        Sync.enqueue('orders','update', o);
+        close();
+        UI.toast('Comanda suspendida. Queda apartada para el administrador.','ok', 4200);
+        Router.render();
+      }
+    });
+  },
+
+  /** Devuelve al servicio una comanda suspendida por error. Solo administrador. */
+  async reactivar(id){
+    const o = DB.order(id); if (!o || o.estado !== 'suspendida') return;
+    if (!Auth.can('suspendidas'))
+      return UI.toast('Solo el administrador puede reactivar una comanda suspendida.','warn');
+    if (!(await UI.confirm('La comanda ' + o.numero + ' vuelve a cocina y a ocupar la mesa ' +
+      o.mesa + ', y sus platos vuelven a reservar inventario.', {ok:'Reactivar'}))) return;
+    o.estado = 'pendiente';
+    delete o.suspension;
+    o.act = Util.now();
+    DB.touch('orders');
+    DB.log('comanda:reactivar', o.numero + ' · mesa ' + o.mesa, o.id);
+    Sync.enqueue('orders','update', o);
+    UI.toast('Comanda reactivada.','ok');
+    Router.render();
+  },
+
+  /** Cierra una comanda suspendida. Solo administrador.
+      `cancelar` la deja registrada como cancelada; `eliminar` la retira de la
+      vista. En los dos casos queda la anotación en la bitácora. */
+  async resolverSuspendida(id, accion){
+    const o = DB.order(id); if (!o || o.estado !== 'suspendida') return;
+    if (!Auth.can('suspendidas'))
+      return UI.toast('Solo el administrador puede cerrar una comanda suspendida.','warn');
+    const eliminar = accion === 'eliminar';
+    if (!(await UI.confirm(
+      (eliminar ? 'Se eliminará ' : 'Se cancelará ') + 'la comanda ' + o.numero +
+      ' por ' + Util.money(this.total(o)) + '. ' +
+      (eliminar ? 'Desaparece de las listas; queda solo en la bitácora.'
+                : 'Queda guardada como cancelada y se puede consultar después.'),
+      {ok: eliminar ? 'Eliminar' : 'Cancelar comanda', danger:true}))) return;
+    o.estado = eliminar ? 'eliminada' : 'cancelada';
+    if (eliminar) o.borrado = true;
+    o.tiempos = Object.assign({}, o.tiempos, {[o.estado]:Util.now()});
+    o.resueltaPor = (Auth.user||{}).id;
+    o.act = Util.now();
+    DB.touch('orders');
+    DB.log('comanda:' + (eliminar ? 'eliminar' : 'cancelar') + '-suspendida',
+      o.numero + ' · mesa ' + o.mesa + ' · ' + Util.money(this.total(o)) +
+      (((o.suspension||{}).motivo) ? ' · ' + o.suspension.motivo : ''), o.id);
+    Sync.enqueue('orders','update', o);
+    UI.toast(eliminar ? 'Comanda eliminada.' : 'Comanda cancelada.','ok');
+    Router.render();
+  },
+
   async cancelar(id){
     const o = DB.order(id); if (!o) return;
     if (!Auth.can('anular')) return UI.toast('Solo un supervisor puede cancelar una comanda.','warn');
@@ -6372,10 +6458,40 @@ Views.orders = {
           '<button class="btn sm grow" data-pre="' + o.id + '">Precuenta</button>' +
           '<button class="btn sm" data-tk="' + o.id + '">' + Util.ico('print') + ' Comanda</button>' +
           (Auth.can('cobrar') ? '<button class="btn sm pri grow" data-pay="' + o.id + '">Cobrar</button>' : '') +
+          (Auth.can('suspender') ? '<button class="btn sm ghost" data-susp="' + o.id + '" style="color:var(--brass)">Suspender</button>' : '') +
           (Auth.can('anular') ? '<button class="btn sm ghost" data-can="' + o.id + '" style="color:var(--ash-dim)">Cancelar</button>' : '') +
         '</div></div>';
     }).join('');
     const cerradas = DB.orders().filter(o=>o.estado==='cobrada').slice(-8).reverse();
+    const suspendidas = DB.orders().filter(o => o.estado === 'suspendida')
+      .sort((a,b) => new Date((b.suspension||{}).en || b.fecha) - new Date((a.suspension||{}).en || a.fecha));
+    const puedeResolver = Auth.can('suspendidas');
+    const verSuspendidas = suspendidas.length && (puedeResolver || Auth.can('suspender'));
+    const panelSuspendidas = !verSuspendidas ? '' :
+      '<div class="card pad0" style="margin-top:14px"><div class="card-h">' +
+        '<h3>Comandas suspendidas</h3>' +
+        '<span class="badge warn right">' + suspendidas.length + '</span></div>' +
+      '<div style="padding:0 16px 14px"><p class="dim" style="font-size:12px;line-height:1.55;margin:10px 0 0">' +
+        'Apartadas por error. No están en cocina, no reservan inventario y no afectan la caja. ' +
+        (puedeResolver ? 'Decide si se cancelan, se eliminan o vuelven al servicio.'
+                       : 'El administrador decide qué hacer con ellas.') + '</p></div>' +
+      UI.table([{t:'Comanda'},{t:'Mesa'},{t:'Mesero'},{t:'Motivo'},{t:'Suspendió'},{t:'Total',n:1}]
+          .concat(puedeResolver ? [{t:'',n:1}] : []),
+        suspendidas.map(o =>
+          '<tr><td class="num">' + Util.esc(o.numero) + '</td>' +
+          '<td>' + Util.esc(o.tipo && o.tipo !== 'mesa' ? (POS.TIPOS[o.tipo]||{corto:o.tipo}).corto : o.mesa) + '</td>' +
+          '<td>' + Util.esc((DB.user(o.meseroId)||{}).nombre||'—') + '</td>' +
+          '<td class="dim">' + Util.esc((o.suspension||{}).motivo || '—') + '</td>' +
+          '<td class="dim" style="white-space:nowrap">' + Util.esc((DB.user((o.suspension||{}).por)||{}).nombre||'—') +
+            '<div style="font-size:11px">' + Util.esc(Util.dt((o.suspension||{}).en || o.fecha)) + '</div></td>' +
+          '<td class="n">' + Util.money(Orders.total(o)) + '</td>' +
+          (puedeResolver ?
+            '<td class="n" style="white-space:nowrap">' +
+              '<button class="btn sm ghost" data-react="' + o.id + '">Reactivar</button> ' +
+              '<button class="btn sm ghost" data-scan="' + o.id + '">Cancelar</button> ' +
+              '<button class="btn sm ghost" data-sdel="' + o.id + '" style="color:var(--ember-hi)">Eliminar</button>' +
+            '</td>' : '') +
+          '</tr>')) + '</div>';
     return '<div class="view-head"><div><div class="eyebrow">' +
         (soloMias ? 'Tus mesas' : 'Todas las mesas') + '</div>' +
       '<h2>Comandas</h2></div></div>' +
@@ -6397,6 +6513,7 @@ Views.orders = {
       (mias.length ? '<div class="grid g-3">' + cards + '</div>' :
         '<div class="card">' + UI.empty('No hay mesas abiertas',
           Auth.can('pos') ? 'Arma el pedido en Vender y presiona Enviar a cocina.' : 'Las comandas abiertas aparecerán aquí.') + '</div>') +
+      panelSuspendidas +
       '<div class="card pad0" style="margin-top:14px"><div class="card-h"><h3>Últimas comandas cerradas</h3></div>' +
         UI.table([{t:'Comanda'},{t:'Mesa'},{t:'Mesero'},{t:'Factura'},{t:'Total',n:1}],
           cerradas.map(o=>'<tr><td class="num">' + Util.esc(o.numero) + '</td><td>' + Util.esc(o.mesa) + '</td>' +
@@ -6411,6 +6528,10 @@ Views.orders = {
     document.querySelectorAll('[data-pre]').forEach(b => b.onclick = () => Ticket.precuenta(b.dataset.pre));
     document.querySelectorAll('[data-tk]').forEach(b => b.onclick = () => Ticket.comanda(b.dataset.tk));
     document.querySelectorAll('[data-can]').forEach(b => b.onclick = () => Orders.cancelar(b.dataset.can));
+    document.querySelectorAll('[data-susp]').forEach(b => b.onclick = () => Orders.suspender(b.dataset.susp));
+    document.querySelectorAll('[data-react]').forEach(b => b.onclick = () => Orders.reactivar(b.dataset.react));
+    document.querySelectorAll('[data-scan]').forEach(b => b.onclick = () => Orders.resolverSuspendida(b.dataset.scan, 'cancelar'));
+    document.querySelectorAll('[data-sdel]').forEach(b => b.onclick = () => Orders.resolverSuspendida(b.dataset.sdel, 'eliminar'));
     document.querySelectorAll('[data-oline]').forEach(b => b.onclick = () => Orders.quitarLinea(b.dataset.oline, Number(b.dataset.idx)));
     const n = document.querySelector('[data-act=new]');
     if (n) n.onclick = () => { POS.reset(); POS.askMesa(()=>Router.go('pos')); };
