@@ -71,12 +71,21 @@ function revisarURL(url) {
   const clave = cred.split(':').slice(1).join(':');
   const trasArroba = cuerpo.slice(cuerpo.lastIndexOf('@') + 1);
   const host = trasArroba.split('?')[0].split('/')[0].split(':')[0];
+  const puerto = (trasArroba.split('?')[0].split('/')[0].split(':')[1] || '').trim();
 
   // El error más fácil de cometer: rellenar a mano un ejemplo en vez de copiar
   // la cadena del panel, y meter la contraseña donde va el nombre del servidor.
   if (/AVNS_/i.test(host)) return {
     causa: 'La contraseña quedó metida dentro del nombre del servidor.',
     arreglo: 'El host lleva un trozo que empieza por AVNS_, que es una contraseña de Aiven, no parte de la dirección. No armes la cadena a mano: en Aiven, Overview, Connection information, cambia el desplegable a "Service URI" y copia esa cadena entera en MYSQL_URL.' };
+
+  // Aiven da un puerto propio, nunca el 3306. Ojo: no se puede deducir que un
+  // host terminado en "-1234" traiga el puerto pegado, porque el nombre del
+  // proyecto puede acabar en cifras (veronjj-7890 es un nombre válido).
+  if (/aivencloud\.com$/i.test(host) && !puerto) return {
+    causa: 'Falta el puerto.',
+    arreglo: 'Aiven no usa el puerto por defecto: da uno propio de cuatro o cinco cifras, que va después del host separado por dos puntos. Lo ves en la casilla "Port" de Connection information.' };
+
   if (/xxx+|<|tu-|ejemplo/i.test(host)) return {
     causa: 'El nombre del servidor todavía tiene texto de ejemplo.',
     arreglo: 'Copia la cadena real desde Aiven: Overview, Connection information, formato "Service URI".' };
@@ -103,7 +112,7 @@ function diagnosticar(err) {
     arreglo: 'Revisa el nombre que va después del puerto. En Aiven la base que viene creada se llama defaultdb.' };
   if (cod === 'ENOTFOUND' || /getaddrinfo/i.test(m)) return {
     causa: 'El nombre del servidor no resuelve.',
-    arreglo: 'El host quedó cortado o mal copiado. Debe verse como algo.aivencloud.com y no llevar espacios.' };
+    arreglo: 'Si el host está bien copiado, casi siempre es que el servicio está apagado: Aiven apaga los gratuitos por inactividad y entonces el nombre deja de existir. Entra al panel y comprueba que el estado diga "Running"; si dice "Powered off", enciéndelo. En cuanto arranque, este servidor se conecta solo en menos de un minuto, sin redesplegar nada.' };
   if (cod === 'ETIMEDOUT' || cod === 'PROTOCOL_SEQUENCE_TIMEOUT' || /timeout/i.test(m)) return {
     causa: 'El servidor no respondió a tiempo.',
     arreglo: 'Suele ser el cortafuegos del proveedor. Autoriza el acceso desde cualquier IP, porque los servicios de despliegue no tienen IP fija. Si el servicio está apagado por inactividad, enciéndelo desde el panel.' };
