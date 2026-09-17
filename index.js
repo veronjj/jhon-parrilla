@@ -56,47 +56,67 @@ const ENTIDADES = new Set([
 /* ── Diagnóstico de conexión ────────────────────────────────────────────
    Los errores de MySQL son secos. Aquí se traducen a qué hay que tocar.
    ------------------------------------------------------------------- */
+/* Los cinco datos de la cadena, ya separados, tal como los va a leer el
+   driver. Se usa `new URL` a propósito: analizarla a mano por mi cuenta era
+   arriesgarme a diagnosticar una cosa mientras el driver ve otra. */
+function partes(url) {
+  let u;
+  try { u = new URL(url); } catch (e) { return null; }
+  return {
+    esquema: u.protocol.replace(':', ''),
+    usuario: decodeURIComponent(u.username || ''),
+    clave:   decodeURIComponent(u.password || ''),
+    host:    u.hostname,
+    puerto:  u.port ? Number(u.port) : null,
+    base:    decodeURIComponent((u.pathname || '').replace(/^\//, '')),
+    ssl:     (u.searchParams.get('ssl-mode') || 'REQUIRED').toUpperCase()
+  };
+}
+
 function revisarURL(url) {
   if (!url) return { causa: 'No hay cadena de conexión.',
     arreglo: 'Falta la variable MYSQL_URL en el servicio. Se copia entera desde el panel del proveedor: empieza por mysql:// y termina con ?ssl-mode=REQUIRED.' };
+  if (/\s/.test(url)) return { causa: 'La cadena trae un espacio o un salto de línea.',
+    arreglo: 'Suele colarse al pegarla. Bórrala del panel de Render y vuelve a pegarla de una sola vez, sin tocar el teclado después.' };
   if (/<.*>/.test(url)) return { causa: 'La cadena todavía trae un marcador de plantilla.',
     arreglo: 'Reemplaza el trozo entre < y >, incluidos los signos, por el valor real.' };
-  if (!/^mysql:\/\//.test(url)) return { causa: 'La cadena no empieza por mysql://',
+
+  const p = partes(url);
+  if (!p || !p.host) {
+    /* Si no se pudo interpretar, el motivo más frecuente es una contraseña con
+       símbolos que parten la cadena. Se mira en crudo, porque precisamente el
+       analizador es el que no pudo con ella. */
+    const cuerpo = url.slice(url.indexOf('//') + 2);
+    const corte = cuerpo.lastIndexOf('@');
+    const clave = corte > 0 ? cuerpo.slice(0, corte).split(':').slice(1).join(':') : '';
+    const simbolos = [...new Set(clave.split('').filter(c => /[@:/?#[\]]/.test(c)))].join(' ');
+    if (simbolos) return {
+      causa: 'La contraseña trae símbolos que parten la cadena.',
+      arreglo: 'Los signos ' + simbolos + ' tienen un significado dentro de la dirección, así que MySQL lee mal dónde termina la clave y dónde empieza el servidor. Lo más simple es regenerar la contraseña en el panel del proveedor hasta que salga solo con letras y números.' };
+    return { causa: 'La cadena no tiene forma de dirección.',
+      arreglo: 'Debe verse así: mysql://usuario:clave@host:puerto/basededatos. Cópiala del panel con el botón de copiar, sin editarla.' };
+  }
+  if (p.esquema !== 'mysql') return { causa: 'La cadena no empieza por mysql://',
     arreglo: 'Usa la URI completa del proveedor, no los datos sueltos de host y puerto.' };
-  const cuerpo = url.slice(8);
-  if (!cuerpo.includes('@')) return { causa: 'La cadena no trae usuario ni contraseña.',
-    arreglo: 'Debe verse así: mysql://usuario:clave@host:puerto/basededatos' };
-  const cred = cuerpo.slice(0, cuerpo.lastIndexOf('@'));
-  const usuario = cred.split(':')[0];
-  const clave = cred.split(':').slice(1).join(':');
-  const trasArroba = cuerpo.slice(cuerpo.lastIndexOf('@') + 1);
-  const host = trasArroba.split('?')[0].split('/')[0].split(':')[0];
-  const puerto = (trasArroba.split('?')[0].split('/')[0].split(':')[1] || '').trim();
 
-  // El error más fácil de cometer: rellenar a mano un ejemplo en vez de copiar
-  // la cadena del panel, y meter la contraseña donde va el nombre del servidor.
-  if (/AVNS_/i.test(host)) return {
+  // Cuando la contraseña acaba dentro del host es que la cadena se armó a mano
+  // juntando las casillas del panel, y quedaron en el orden equivocado.
+  if (/AVNS_/i.test(p.host)) return {
     causa: 'La contraseña quedó metida dentro del nombre del servidor.',
-    arreglo: 'El host lleva un trozo que empieza por AVNS_, que es una contraseña de Aiven, no parte de la dirección. No armes la cadena a mano: en Aiven, Overview, Connection information, cambia el desplegable a "Service URI" y copia esa cadena entera en MYSQL_URL.' };
-
-  // Aiven da un puerto propio, nunca el 3306. Ojo: no se puede deducir que un
-  // host terminado en "-1234" traiga el puerto pegado, porque el nombre del
-  // proyecto puede acabar en cifras (veronjj-7890 es un nombre válido).
-  if (/aivencloud\.com$/i.test(host) && !puerto) return {
-    causa: 'Falta el puerto.',
-    arreglo: 'Aiven no usa el puerto por defecto: da uno propio de cuatro o cinco cifras, que va después del host separado por dos puntos. Lo ves en la casilla "Port" de Connection information.' };
-
-  if (/xxx+|<|tu-|ejemplo/i.test(host)) return {
+    arreglo: 'El host lleva un trozo que empieza por AVNS_, que es una contraseña de Aiven, no parte de la dirección. En Aiven, Overview, Connection information, cambia el desplegable a "Service URI" y copia esa cadena entera en MYSQL_URL, sin editar nada.' };
+  if (/xxx+|ejemplo|tu-host/i.test(p.host)) return {
     causa: 'El nombre del servidor todavía tiene texto de ejemplo.',
     arreglo: 'Copia la cadena real desde Aiven: Overview, Connection information, formato "Service URI".' };
-  if (!usuario) return { causa: 'Falta el usuario.',
+  if (!p.usuario) return { causa: 'Falta el usuario.',
     arreglo: 'Va justo después de mysql:// y antes de los dos puntos. En Aiven suele ser avnadmin.' };
-  if (!clave) return { causa: 'Falta la contraseña.',
+  if (!p.clave) return { causa: 'Falta la contraseña.',
     arreglo: 'Va entre los dos puntos y la arroba. Cópiala del panel, no la escribas de memoria.' };
-  if (/[@:/?#[\]]/.test(clave)) return { causa: 'La contraseña trae símbolos que parten la cadena.',
-    arreglo: 'Los signos @ : / ? # [ ] hay que codificarlos. Lo más simple es regenerar la contraseña en el panel del proveedor.' };
-  const ruta = trasArroba.split('?')[0];
-  if (!ruta.includes('/') || !ruta.split('/')[1]) return { causa: 'La cadena no dice a qué base de datos entrar.',
+  // Aiven da un puerto propio. Ojo: el nombre del proyecto puede acabar en
+  // cifras (veronjj-7890 es válido), así que de eso no se deduce nada.
+  if (/aivencloud\.com$/i.test(p.host) && !p.puerto) return {
+    causa: 'Falta el puerto.',
+    arreglo: 'Aiven no usa el puerto por defecto: da uno propio de cuatro o cinco cifras, que va después del host separado por dos puntos. Lo ves en la casilla "Port" de Connection information.' };
+  if (!p.base) return { causa: 'La cadena no dice a qué base de datos entrar.',
     arreglo: 'Después del puerto va una barra y el nombre de la base. En Aiven suele llamarse defaultdb.' };
   return null;
 }
@@ -144,6 +164,12 @@ function opciones() {
     enableKeepAlive: true,
     keepAliveInitialDelay: 10000,
     connectTimeout: 15000,
+    // Un MySQL gestionado cierra por su cuenta las conexiones ociosas (Aiven,
+    // a los pocos minutos). Si el pool las conserva, la siguiente consulta usa
+    // un socket muerto y el servicio "se desconecta" sin motivo aparente.
+    // Reciclarlas antes de que las cierren ellos evita ese agujero entero.
+    idleTimeout: Number(process.env.MYSQL_IDLE_MS || 60000),
+    maxIdle: 2,
     charset: 'utf8mb4_general_ci',
     timezone: 'Z',
     supportBigNumbers: true,
@@ -197,13 +223,67 @@ async function conectar() {
   const problema = revisarURL(MYSQL_URL);
   if (problema) { const e = new Error(problema.causa); e.diagnostico = problema; throw e; }
   const p = mysql.createPool(opciones());
+  // Sin este oyente, un fallo del pool sube como excepción no capturada y deja
+  // el proceso creyendo que sigue conectado.
+  p.on('error', err => {
+    console.error('[mysql] el pool falló:', err && err.code, err && err.message);
+    caido(err);
+  });
   const cx = await p.getConnection();
   try { for (const sql of ESQUEMA) await cx.query(sql); }
   finally { cx.release(); }
   pool = p;
   listo = true;
   errorConexion = null;
-  console.log('[mysql] conectado y esquema listo');
+  console.log('[mysql] conectado y esquema listo · ' + opciones().host + ':' + opciones().port);
+}
+
+/* Errores que significan "el socket ya no sirve" y no "la consulta está mal".
+   Ante uno de estos se rehace el pool y se reintenta una vez: para el usuario
+   la petición simplemente tarda un poco más en vez de fallar. */
+const MUERTA = new Set(['PROTOCOL_CONNECTION_LOST', 'ECONNRESET', 'EPIPE',
+  'ETIMEDOUT', 'ER_CLIENT_INTERACTION_TIMEOUT', 'POOL_CLOSED', 'ECONNREFUSED']);
+
+function caido(err) {
+  if (!listo) return;
+  listo = false;
+  const d = diagnosticar(err);
+  errorConexion = { causa: d.causa, arreglo: d.arreglo, mensajeCrudo: String((err && err.message) || err) };
+  const viejo = pool;
+  pool = null;
+  if (viejo) { try { viejo.end().catch(() => {}); } catch (e) {} }
+}
+
+/** Una conexión del pool, rehaciéndolo si el que había ya no sirve. La usan
+    las operaciones que necesitan varias sentencias seguidas sobre la misma
+    conexión: reservar números y publicar la base. */
+async function conexion() {
+  if (!pool) await conectar();
+  try {
+    return await pool.getConnection();
+  } catch (err) {
+    if (!MUERTA.has(err && err.code)) throw err;
+    console.warn('[mysql] conexión caída al pedirla (' + err.code + '), rehaciendo el pool');
+    caido(err);
+    await conectar();
+    return await pool.getConnection();
+  }
+}
+
+/** Toda consulta pasa por aquí: si la conexión murió, se rehace y se repite. */
+async function consultar(sql, args) {
+  // Sin pool se intenta levantarlo aquí mismo: si la base acaba de volver, la
+  // petición del usuario se atiende ya, sin esperar al siguiente vigilante.
+  if (!pool) await conectar();
+  try {
+    return await pool.query(sql, args);
+  } catch (err) {
+    if (!MUERTA.has(err && err.code)) throw err;
+    console.warn('[mysql] conexión caída (' + err.code + '), rehaciendo el pool y reintentando');
+    caido(err);
+    await conectar();          // si esto falla, sube el error y /salud lo explica
+    return await pool.query(sql, args);
+  }
 }
 
 /* ── Numeración de cambios ──────────────────────────────────────────────
@@ -218,7 +298,7 @@ async function conectar() {
 const enVuelo = new Set();
 
 async function reservar(n) {
-  const cx = await pool.getConnection();
+  const cx = await conexion();
   try {
     const [r] = await cx.query(
       'UPDATE contadores SET valor = LAST_INSERT_ID(valor + ?) WHERE nombre = ?', [n, 'seq']);
@@ -263,7 +343,7 @@ async function aplicarOps(ops, sede) {
   const lista = Array.from(porClave.values());
   if (!lista.length) return nada;   // p.ej. solo llegó la bitácora, que no viaja
 
-  const [previos] = await pool.query(
+  const [previos] = await consultar(
     'SELECT clave, act FROM registros WHERE clave IN (?)', [lista.map(v => v.clave)]);
   const mapa = new Map(previos.map(p => [p.clave, p.act || '']));
 
@@ -288,7 +368,7 @@ async function aplicarOps(ops, sede) {
 
   try {
     if (nuevas.length) {
-      await pool.query(
+      await consultar(
         `INSERT INTO registros (clave, entidad, id_reg, datos, act, seq, sede, ts)
          VALUES ?
          ON DUPLICATE KEY UPDATE
@@ -301,7 +381,7 @@ async function aplicarOps(ops, sede) {
       const casos = obsoletas.map(() => 'WHEN ? THEN ?').join(' ');
       const args = [];
       obsoletas.forEach(o => { args.push(o.clave, o.seq); });
-      await pool.query(
+      await consultar(
         `UPDATE registros SET ts = ?, seq = CASE clave ${casos} END WHERE clave IN (?)`,
         [ahora, ...args, obsoletas.map(o => o.clave)]);
     }
@@ -389,7 +469,11 @@ function exigirDB(req, res, next) {
   next();
 }
 const guardia = fn => (req, res) => fn(req, res).catch(err => {
-  console.error('[error]', req.method, req.path, err.message);
+  console.error('[error]', req.method, req.path, err.code || '', err.message);
+  // Distinguir "la base no está" de "algo se rompió" importa: con 503 el
+  // cliente sabe que debe reintentar, y la cola de la tablet no se pierde.
+  const sinBase = !listo || MUERTA.has(err && err.code);
+  if (sinBase) return res.status(503).json({ ok: false, error: 'base de datos no disponible', diagnostico: errorConexion });
   res.status(500).json({ ok: false, error: err.message });
 });
 
@@ -402,10 +486,15 @@ app.get(['/salud', '/health'], guardia(async (req, res) => {
   let registros = 0, msBase = null;
   if (listo) {
     try {
-      const [r] = await pool.query('SELECT COUNT(*) AS n FROM registros');
+      const [r] = await consultar('SELECT COUNT(*) AS n FROM registros');
       registros = Number(r[0].n);
       msBase = Date.now() - t0;
-    } catch (e) {}
+    } catch (e) {
+      // Antes este fallo se tragaba y /salud seguía diciendo "conectada" con
+      // la base muerta. Es justo el sitio donde hay que enterarse: aquí pegan
+      // UptimeRobot y todas las tablets.
+      caido(e);
+    }
   }
   const cuerpo = {
     ok: listo, servicio: 'jhon-parrilla-pos', version: VERSION,
@@ -414,6 +503,16 @@ app.get(['/salud', '/health'], guardia(async (req, res) => {
     appVersion: APP_VERSION,      // versión del HTML que sirve este servidor
     enVivo: oyentes.size          // aparatos con el canal de avisos abierto
   };
+  /* Qué cadena está usando de verdad este servidor, ya separada en sus partes.
+     La contraseña nunca sale: solo cuántos caracteres tiene, que basta para
+     ver si está vacía o si quedó cortada al pegarla. Esto evita la pregunta
+     de siempre: "¿y qué tiene Render guardado ahí dentro?". */
+  const p = partes(MYSQL_URL);
+  cuerpo.conexion = p ? {
+    host: p.host, puerto: p.puerto, usuario: p.usuario, base: p.base,
+    ssl: p.ssl, claveCaracteres: p.clave.length,
+    certificadoCA: MYSQL_CA ? 'puesto' : 'sin poner'
+  } : { error: 'la cadena no se pudo interpretar' };
   // Cuánto tarda la base en contestar: sirve para saber si la lentitud está
   // en la base o en el servidor web.
   if (msBase !== null) cuerpo.msBase = msBase;
@@ -432,7 +531,7 @@ app.post('/sync', exigirDB, guardia(async (req, res) => {
 
   const desde = Number(cursor) || 0;
   const tope = techo();
-  const [filas] = await pool.query(
+  const [filas] = await consultar(
     tope === Infinity
       ? 'SELECT entidad, datos, seq FROM registros WHERE seq > ? ORDER BY seq LIMIT 500'
       : 'SELECT entidad, datos, seq FROM registros WHERE seq > ? AND seq <= ? ORDER BY seq LIMIT 500',
@@ -460,7 +559,7 @@ app.post('/sync', exigirDB, guardia(async (req, res) => {
 
 /* ── GET /estado ────────────────────────────────────────────────────── */
 app.get('/estado', exigirDB, guardia(async (req, res) => {
-  const [filas] = await pool.query('SELECT entidad, datos, seq FROM registros ORDER BY seq');
+  const [filas] = await consultar('SELECT entidad, datos, seq FROM registros ORDER BY seq');
   const estado = {};
   ENTIDADES.forEach(e => { if (e !== 'config') estado[e] = []; });
   let cursor = 0;
@@ -480,7 +579,7 @@ app.post('/sembrar', exigirDB, guardia(async (req, res) => {
   const { sede, estado, forzar } = req.body || {};
   if (!estado || !estado.config) return res.status(400).json({ ok: false, error: 'faltan datos' });
 
-  const [c] = await pool.query('SELECT COUNT(*) AS n FROM registros');
+  const [c] = await consultar('SELECT COUNT(*) AS n FROM registros');
   const existentes = Number(c[0].n);
   if (existentes > 0 && !forzar) return res.status(409).json({ ok: false, registros: existentes });
   if (existentes > 0 && forzar && !PERMITIR_FORZAR)
@@ -500,7 +599,7 @@ app.post('/sembrar', exigirDB, guardia(async (req, res) => {
 
   const base = await reservar(filas.length);
   const ahora = new Date();
-  const cx = await pool.getConnection();
+  const cx = await conexion();
   try {
     // Borrar y publicar van juntos: si algo falla a mitad, no queda una base
     // a medio vaciar en pleno servicio.
@@ -547,7 +646,7 @@ app.post('/respaldo', exigirDB, guardia(async (req, res) => {
   const crudo = Buffer.from(JSON.stringify(dump), 'utf8');
   const comprimido = await gzip(crudo, { level: 6 });
 
-  await pool.query(
+  await consultar(
     `INSERT INTO respaldos (nombre, motivo, generado, usuario, sede, equipo, resumen, dump, bytes)
      VALUES (?,?,?,?,?,?,?,?,?)`,
     [nombre, String(motivo || dump.motivo || 'automático').slice(0, 160),
@@ -557,16 +656,16 @@ app.post('/respaldo', exigirDB, guardia(async (req, res) => {
      String(dump.equipo || '').slice(0, 140),
      JSON.stringify(dump.resumen || {}), comprimido, crudo.length]);
 
-  const [viejos] = await pool.query(
+  const [viejos] = await consultar(
     'SELECT nombre FROM respaldos ORDER BY generado DESC, nombre DESC LIMIT 500 OFFSET ?', [MAX_RESPALDOS]);
-  if (viejos.length) await pool.query('DELETE FROM respaldos WHERE nombre IN (?)', [viejos.map(v => v.nombre)]);
+  if (viejos.length) await consultar('DELETE FROM respaldos WHERE nombre IN (?)', [viejos.map(v => v.nombre)]);
 
   res.json({ ok: true, archivo: nombre, bytes: crudo.length, comprimido: comprimido.length });
 }));
 
 app.get('/respaldos', exigirDB, guardia(async (req, res) => {
   // Sin la columna `dump`: la lista no necesita cargar los volcados enteros.
-  const [filas] = await pool.query(
+  const [filas] = await consultar(
     `SELECT nombre, motivo, generado, usuario, equipo, resumen, bytes
      FROM respaldos ORDER BY generado DESC, nombre DESC LIMIT ?`, [MAX_RESPALDOS]);
   res.json({
@@ -581,7 +680,7 @@ app.get('/respaldos', exigirDB, guardia(async (req, res) => {
 }));
 
 app.get('/respaldo/:nombre', exigirDB, guardia(async (req, res) => {
-  const [filas] = await pool.query('SELECT dump FROM respaldos WHERE nombre = ?', [req.params.nombre]);
+  const [filas] = await consultar('SELECT dump FROM respaldos WHERE nombre = ?', [req.params.nombre]);
   if (!filas.length) return res.status(404).json({ ok: false, error: 'no existe' });
   const crudo = await gunzip(filas[0].dump);
   res.type('application/json').send(crudo);
@@ -618,10 +717,24 @@ if (require.main === module) {
       console.error('  (también lo verás en /salud)');
       console.error('─────────────────────────────────────────────\n');
     };
-    conectar().catch(err => {
-      fallo(err);
-      setInterval(() => { if (!listo) conectar().catch(fallo); }, 20000);
-    });
+    /* El vigilante se arma pase lo que pase. Antes solo existía si la primera
+       conexión fallaba: si el servidor arrancaba bien y la base se caía más
+       tarde —que es lo normal con un plan gratuito que se apaga por
+       inactividad— no quedaba nadie reintentando y había que redesplegar a
+       mano. Ese era el "se desconecta y no vuelve". */
+    let avisado = false;
+    const vigilar = () => {
+      if (listo) { avisado = false; return; }
+      conectar().then(() => {
+        console.log('[mysql] conexión recuperada');
+      }).catch(err => {
+        if (!avisado) { fallo(err); avisado = true; }   // sin repetir el mural cada 10 s
+        else errorConexion = Object.assign({}, errorConexion,
+          {mensajeCrudo: String(err.message || err)});
+      });
+    };
+    conectar().catch(err => { fallo(err); avisado = true; });
+    setInterval(vigilar, 10000).unref();
   });
 }
 
