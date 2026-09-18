@@ -10,7 +10,7 @@
 <meta name="apple-mobile-web-app-title" content="Jhon Parrilla">
 <!-- Se sube cada vez que se publica un cambio. El servidor la lee y la expone
      en /salud, para comparar de un vistazo qué versión tiene cada tablet. -->
-<meta name="app-version" content="2026.09.17">
+<meta name="app-version" content="2026.09.18">
 <title>Jhon Parrilla · POS</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230C0B0A'/><path d='M7 20h18M7 24h18' stroke='%23A3231C' stroke-width='2.4' stroke-linecap='round'/><path d='M11 8c0 3-3 3-3 6h16c0-3-3-3-3-6' stroke='%23C8A24A' stroke-width='2' fill='none' stroke-linecap='round'/></svg>">
 <style>
@@ -1986,11 +1986,11 @@ DB._flush = Util.debounce(async function(){
    Toda operación es un upsert idempotente: reenviarla no duplica nada.
    Conflictos: gana la escritura con `act` más reciente.
    ------------------------------------------------------------------- */
-const APP_VERSION = '2026.09.17';
+const APP_VERSION = '2026.09.18';
 
 const Sync = {
   running:false, lastAt:null, lastError:null, cursor:null, _poll:null, _fallos:0,
-  enVivo:false, _es:null,
+  enVivo:false, _es:null, _visto:0, _ojo:null, _reint:null,
 
   activo(){ return !!(DB.d.config.endpoint||'').trim(); },
 
@@ -2173,17 +2173,25 @@ const Sync = {
       Si se corta, el navegador reconecta solo. */
   escuchar(){
     if (this._es){ try{ this._es.close(); }catch(e){} this._es = null; }
+    clearTimeout(this._reint);
     this.enVivo = false;
     if (!this.activo() || typeof EventSource === 'undefined') return;
     let es;
     try{ es = new EventSource(this.url('/eventos')); }catch(e){ return; }
     this._es = es;
+    this._visto = Date.now();
+
+    // Cualquier señal del servidor cuenta como "sigue ahí".
+    const vivo = () => { this._visto = Date.now(); if (!this.enVivo){ this.enVivo = true; this._pinta(); } };
+
     es.onopen = () => {
-      this.enVivo = true; UI.refreshStatus();
-      if (State.view === 'sync') Router.render();
+      vivo();
       this.run(true);          // por si pasó algo mientras estaba desconectado
     };
+    es.addEventListener('hola', vivo);
+    es.addEventListener('latido', vivo);
     es.onmessage = ev => {
+      vivo();
       let d = null;
       try{ d = JSON.parse(ev.data); }catch(e){ return; }
       // Quien acaba de escribir ya tiene ese número: no se pregunta a sí mismo.
@@ -2191,9 +2199,46 @@ const Sync = {
       this.run(true);
     };
     es.onerror = () => {
-      this.enVivo = false; UI.refreshStatus();
-      if (State.view === 'sync') Router.render();
+      this.enVivo = false; this._pinta();
+      /* Si el navegador dejó la conexión CERRADA no va a reintentar por su
+         cuenta: pasa cuando el servidor contesta algo que no es 200, como en
+         el primer arranque de Render tras dormirse. Se reabre a mano. */
+      if (es.readyState === 2) this._reconectarPronto();
     };
+    this._vigilar();
+  },
+
+  /** El canal solo cuenta como vivo si además ha dado señales hace poco. Sin
+      esto, entre que muere en silencio y el vigilante lo nota, el sondeo de
+      respaldo se saltaba por creerlo vivo: justo cuando más falta hacía. */
+  SILENCIO_MS: 45000,
+  canalVivo(){ return this.enVivo && (Date.now() - (this._visto||0)) < this.SILENCIO_MS; },
+
+  _pinta(){
+    UI.refreshStatus();
+    if (State.view === 'sync') Router.render();
+  },
+
+  _reconectarPronto(){
+    clearTimeout(this._reint);
+    this._reint = setTimeout(()=>{ if (Auth.user) this.escuchar(); }, 4000);
+  },
+
+  /** Vigilante de silencio.
+
+      El caso que rompe a un celular no es que el canal dé error, sino que se
+      quede callado: al cambiar de WiFi a datos el socket muere sin avisar, el
+      navegador sigue creyéndolo abierto y `onerror` nunca salta. Como el
+      servidor late cada 15 segundos, un silencio largo solo puede significar
+      que la conexión ya no existe. */
+  _vigilar(){
+    clearInterval(this._ojo);
+    this._ojo = setInterval(() => {
+      if (!this._es || !this.activo()) return;
+      if (this.canalVivo()) return;
+      this.enVivo = false; this._pinta();
+      this.escuchar();        // reabre; el vigilante se rearma dentro
+    }, 5000);
   },
 
   /** Red de seguridad, no el mecanismo principal. Con el canal en pie solo se
@@ -2209,7 +2254,7 @@ const Sync = {
       if (!Auth.user || !this.activo() || !navigator.onLine || !DB.d.config.autoSync) return;
       if (document.hidden && State.view !== 'kds') return;
       const callado = !this.lastAt || (Date.now() - new Date(this.lastAt).getTime()) > 60000;
-      if (this.enVivo && !callado && !DB.d.queue.length) return;
+      if (this.canalVivo() && !callado && !DB.d.queue.length) return;
       this.run(true);
     }, 20000);
   }
@@ -10881,6 +10926,12 @@ const Boot = {
     });
     // En móviles la página se descarta sin avisar: se guarda antes de perderla
     window.addEventListener('pagehide', ()=>Sesion.guardarYa());
+    window.addEventListener('pageshow', e => {
+      if (!Auth.user) return;
+      // e.persisted = la página vuelve congelada de la caché del navegador.
+      if (e.persisted || !Sync.enVivo) Sync.escuchar();
+      Sync.run(true);
+    });
     window.addEventListener('beforeunload', ()=>Sesion.guardarYa());
     setInterval(()=>{ if (navigator.onLine && DB.d.config.autoSync && Sync.pending()) Sync.run(true); }, 60000);
   },
