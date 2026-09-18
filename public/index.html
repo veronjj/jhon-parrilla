@@ -10,7 +10,7 @@
 <meta name="apple-mobile-web-app-title" content="Jhon Parrilla">
 <!-- Se sube cada vez que se publica un cambio. El servidor la lee y la expone
      en /salud, para comparar de un vistazo qué versión tiene cada tablet. -->
-<meta name="app-version" content="2026.09.19">
+<meta name="app-version" content="2026.09.20">
 <title>Jhon Parrilla · POS</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230C0B0A'/><path d='M7 20h18M7 24h18' stroke='%23A3231C' stroke-width='2.4' stroke-linecap='round'/><path d='M11 8c0 3-3 3-3 6h16c0-3-3-3-3-6' stroke='%23C8A24A' stroke-width='2' fill='none' stroke-linecap='round'/></svg>">
 <style>
@@ -1986,7 +1986,7 @@ DB._flush = Util.debounce(async function(){
    Toda operación es un upsert idempotente: reenviarla no duplica nada.
    Conflictos: gana la escritura con `act` más reciente.
    ------------------------------------------------------------------- */
-const APP_VERSION = '2026.09.19';
+const APP_VERSION = '2026.09.20';
 
 const Sync = {
   running:false, lastAt:null, lastError:null, cursor:null, _poll:null, _fallos:0,
@@ -5224,6 +5224,19 @@ const Domicilios = {
     return { ventas, cantidad: ventas.length, efectivo, transferencia, otros, total, ingresos: total, egresos };
   },
 
+  /** Contexto del día de un turno, para explicar un resumen en ceros: cuánto
+      duró y qué se cobró ese día fuera de su ventana. */
+  contextoDia(t){
+    const dia = (t.apertura||'').slice(0,10);
+    const delDia = DB.paid().filter(s => s.tipo === 'domicilio' && (s.fecha||'').slice(0,10) === dia);
+    const ms = new Date(t.cierre || Util.now()) - new Date(t.apertura);
+    const min = Math.max(0, Math.round(ms/60000));
+    const duracion = min < 60 ? (min + ' minuto' + (min===1?'':'s'))
+      : (Math.floor(min/60) + ' h ' + String(min%60).padStart(2,'0') + ' min');
+    return { duracion, delDia: delDia.length,
+             totalDia: delDia.reduce((a,s)=>a+(s.total||0), 0) };
+  },
+
   /** Domicilios cobrados dentro de la ventana del turno que NO están contando.
       Sirve para que un resumen en ceros nunca sea mudo: si hay dinero del día
       que se quedó fuera, la pantalla lo dice y explica por qué. */
@@ -5429,7 +5442,22 @@ Views.domicilios = {
     const uid = (Auth.user||{}).id;
     const t = uid ? DB.openDomTurno(uid) : null;
     if (!t) return UI.toast('No tienes un turno de domicilios abierto.','warn');
-    if (!(await UI.confirm('Usted cerrará su turno de domicilios, ¿realizó la impresión del Resumen del Turno?',
+    /* Cerrar un turno sin domicilios casi nunca es lo que se quiere: significa
+       que se abrió cuando la jornada ya iba corrida, y el resumen va a salir
+       en ceros. Se avisa antes de cerrarlo, que es cuando todavía tiene
+       arreglo, y no después al imprimir. */
+    const tt = Domicilios.turnoTotals(t);
+    if (!tt.cantidad){
+      const ctx = Domicilios.contextoDia(t);
+      const ok = await UI.confirm(
+        'Este turno no registra ningún domicilio y lleva abierto ' + ctx.duracion + '. ' +
+        'El resumen va a salir en ceros.' +
+        (ctx.delDia ? ' Hoy se cobraron ' + ctx.delDia + ' domicilio' + (ctx.delDia>1?'s':'') +
+          ' por ' + Util.money(ctx.totalDia) + ', pero antes de que abrieras este turno: ' +
+          'los domicilios se cuentan desde la apertura, no hacia atrás.' : '') +
+        ' ¿Cerrarlo de todas formas?', {ok:'Cerrar igualmente'});
+      if (!ok) return;
+    } else if (!(await UI.confirm('Usted cerrará su turno de domicilios, ¿realizó la impresión del Resumen del Turno?',
       {ok:'Sí, continuar con el cierre'}))) return;
     t.estado = 'cerrada';
     t.cierre = Util.now();
@@ -5467,9 +5495,12 @@ Views.domicilios = {
     const cfg = DB.d.config;
     const linea = (label, valor, opts) => {
       opts = opts || {};
+      // `crudo` imprime el valor tal cual. Sin esto, el número de facturas
+      // salía formateado como dinero: "$ 3" en vez de "3".
+      const txt = opts.crudo ? String(valor) : Util.money(valor);
       return '<div style="display:flex;justify-content:space-between;gap:10px;margin:' + (opts.mt||'3px') + ' 0;' +
         (opts.grande ? 'font-size:14px;font-weight:800' : 'font-size:12px') + '">' +
-        '<span>' + label + '</span><b style="font-family:var(--mono)">' + Util.money(valor) + '</b></div>';
+        '<span>' + label + '</span><b style="font-family:var(--mono)">' + txt + '</b></div>';
     };
     const cuerpo =
       '<div class="ticket">' +
@@ -5484,7 +5515,7 @@ Views.domicilios = {
       (t.cierre ? '<div>Cierre: ' + Util.dt(t.cierre) + '</div>' : '') +
       '<div>Impreso: ' + Util.dt(Util.now()) + '</div>' +
       '<hr>' +
-      linea('Facturas del turno', tt.cantidad, {grande:false}) +
+      linea('Facturas del turno', tt.cantidad, {crudo:true}) +
       '<hr>' +
       linea('Efectivo', tt.efectivo) +
       linea('Transferencias', tt.transferencia) +
@@ -5495,6 +5526,19 @@ Views.domicilios = {
       '<hr>' +
       linea('TOTAL DEL TURNO', tt.total, {grande:true, mt:'6px'}) +
       '<hr>' +
+      /* Un tiquete lleno de ceros no puede salir sin decir por qué. Casi
+         siempre es que el turno se abrió cuando la jornada ya iba corrida: los
+         domicilios se cuentan desde la apertura, no hacia atrás. */
+      (tt.cantidad ? '' : (function(){
+        const ctx = Domicilios.contextoDia(t);
+        return '<div style="font-size:10.5px;line-height:1.5;border:1px dashed #000;padding:5px 6px;margin:4px 0">' +
+          '<b>Este turno no registra domicilios.</b><br>' +
+          'Duró ' + ctx.duracion + '. Los domicilios se cuentan desde que se abre el turno, ' +
+          'no hacia atrás.' +
+          (ctx.delDia ? '<br>Ese día se cobraron ' + ctx.delDia + ' domicilio' + (ctx.delDia>1?'s':'') +
+            ' por ' + Util.money(ctx.totalDia) + ', fuera de esta ventana.' : '') +
+        '</div>';
+      })()) +
       '<div class="c" style="font-size:10px;margin-top:4px">Resumen totalizado del turno de domicilios</div>' +
       '</div>';
 
