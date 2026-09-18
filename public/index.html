@@ -10,7 +10,7 @@
 <meta name="apple-mobile-web-app-title" content="Jhon Parrilla">
 <!-- Se sube cada vez que se publica un cambio. El servidor la lee y la expone
      en /salud, para comparar de un vistazo qué versión tiene cada tablet. -->
-<meta name="app-version" content="2026.09.18">
+<meta name="app-version" content="2026.09.19">
 <title>Jhon Parrilla · POS</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230C0B0A'/><path d='M7 20h18M7 24h18' stroke='%23A3231C' stroke-width='2.4' stroke-linecap='round'/><path d='M11 8c0 3-3 3-3 6h16c0-3-3-3-3-6' stroke='%23C8A24A' stroke-width='2' fill='none' stroke-linecap='round'/></svg>">
 <style>
@@ -1986,7 +1986,7 @@ DB._flush = Util.debounce(async function(){
    Toda operación es un upsert idempotente: reenviarla no duplica nada.
    Conflictos: gana la escritura con `act` más reciente.
    ------------------------------------------------------------------- */
-const APP_VERSION = '2026.09.18';
+const APP_VERSION = '2026.09.19';
 
 const Sync = {
   running:false, lastAt:null, lastError:null, cursor:null, _poll:null, _fallos:0,
@@ -5188,9 +5188,32 @@ const Domicilios = {
      misma fuente ya corregida que usa Caja), para que el resumen de un
      cierre de Domicilios tenga la misma estructura que el de Caja:
      facturas, efectivo, transferencia, ingresos y egresos. */
+  /** El turno de domicilios al que pertenece un cobro.
+
+      Se marca en la venta al cobrarla, y esa marca es la que manda después.
+      Deducirlo por "quién es el dueño de la venta" no funciona en un
+      restaurante real: una encargada toma el pedido y otra lo cobra, o lo
+      cobra la caja. Atar la venta a un `userId` obliga a elegir a cuál de las
+      dos pertenece, y la otra ve su resumen en ceros. El cobro, en cambio,
+      ocurre una sola vez y en un turno concreto. */
+  turnoDeCobro(venta){
+    const propio = DB.openDomTurno((Auth.user||{}).id);
+    if (propio) return propio;
+    // Si quien cobra no lleva turno (la caja, por ejemplo), se imputa al turno
+    // abierto de quien tomó el pedido, que es quien responde por ese dinero.
+    const deQuienTomo = venta && venta.userId ? DB.openDomTurno(venta.userId) : null;
+    return deQuienTomo || null;
+  },
+
   turnoTotals(t){
-    const ventas = DB.paid().filter(s => s.tipo === 'domicilio' && s.userId === t.userId &&
-      s.fecha >= t.apertura && (!t.cierre || s.fecha <= t.cierre));
+    const ventas = DB.paid().filter(s => {
+      if (s.tipo !== 'domicilio') return false;
+      // Marcada al cobrar: no hay nada que deducir.
+      if (s.domTurnoId) return s.domTurnoId === t.id;
+      /* Ventas anteriores a que existiera la marca. Se resuelven como antes,
+         por encargada y ventana, para que el historial siga cuadrando. */
+      return s.userId === t.userId && s.fecha >= t.apertura && (!t.cierre || s.fecha <= t.cierre);
+    });
     const porMetodo = Metrics.byPayment(ventas);
     const efectivo = porMetodo['Efectivo'] || 0;
     const transferencia = (porMetodo['Transferencia']||0) + (porMetodo['Nequi']||0) + (porMetodo['Daviplata']||0);
@@ -5199,6 +5222,15 @@ const Domicilios = {
     const egresos = (DB.d.gastos||[]).filter(g => g.userId === t.userId &&
       g.fecha >= t.apertura && (!t.cierre || g.fecha <= t.cierre)).reduce((a,g)=>a+(Number(g.valor)||0), 0);
     return { ventas, cantidad: ventas.length, efectivo, transferencia, otros, total, ingresos: total, egresos };
+  },
+
+  /** Domicilios cobrados dentro de la ventana del turno que NO están contando.
+      Sirve para que un resumen en ceros nunca sea mudo: si hay dinero del día
+      que se quedó fuera, la pantalla lo dice y explica por qué. */
+  sueltosDelTurno(t){
+    const dentro = new Set(this.turnoTotals(t).ventas.map(s => s.id));
+    return DB.paid().filter(s => s.tipo === 'domicilio' && !dentro.has(s.id) &&
+      s.fecha >= t.apertura && (!t.cierre || s.fecha <= t.cierre));
   }
 };
 
@@ -5250,6 +5282,22 @@ Views.domicilios = {
           UI.kpi('Transferencias', Util.money(tt.transferencia), 'Nequi, Daviplata, transferencia') +
           UI.kpi('Total del turno', Util.money(tt.total), 'suma de domicilios cobrados') +
         '</div>' +
+        /* Un resumen en ceros no puede quedarse callado. Si hubo domicilios
+           cobrados mientras este turno estaba abierto y no están contando, se
+           dice cuántos y por cuánto, en vez de dejar la pantalla en blanco. */
+        (function(){
+          const sueltos = Domicilios.sueltosDelTurno(miTurno);
+          if (!sueltos.length) return '';
+          const suma = sueltos.reduce((a,s)=>a+(s.total||0), 0);
+          return '<div style="margin:0 16px 16px;padding:11px 13px;border-radius:var(--r);' +
+            'background:rgba(163,35,28,.10);border:1px solid rgba(163,35,28,.35)">' +
+            '<div style="font-size:12.5px;font-weight:700;color:var(--ember-hi)">' +
+              sueltos.length + ' domicilio' + (sueltos.length>1?'s':'') + ' por ' + Util.money(suma) +
+              ' se cobraron durante este turno pero no cuentan en él.</div>' +
+            '<div class="dim" style="font-size:11.5px;margin-top:5px;line-height:1.5">' +
+              'Son cobros de otra encargada, o anteriores a que se sellara el turno en la venta. ' +
+              'Están en la lista de abajo y sí entran en el total del día.</div></div>';
+        })() +
       '</div>';
     })();
 
@@ -5958,6 +6006,7 @@ Views.domicilios = {
             venta:{
               id: bor._id || Util.uid('v'), numero, fecha:ahora,
               sede:c.sedeId, userId:(original && original.userId) || (Auth.user||{}).id,
+              domTurnoId:(original && original.domTurnoId) || undefined,
               clienteId:'cl_1', mesa:'DOM', tipo:'domicilio',
               entrega:{nombre:bor.nombre, contacto:bor.contacto, direccion:bor.direccion, telefono:bor.telefono},
               items: bor.items.map(i=>{
@@ -6084,6 +6133,11 @@ Views.domicilios = {
                 venta.estado = 'pagada';
                 venta.pagos = [{metodo, monto:venta.total}];
                 venta.cambio = 0;
+                /* Se sella aquí el turno al que pertenece este dinero. Es el
+                   único momento en que el cobro existe, y deja el resumen
+                   fuera del alcance de quién guarde o edite la venta después. */
+                const turnoDom = Domicilios.turnoDeCobro(venta);
+                if (turnoDom) venta.domTurnoId = turnoDom.id;
                 const orden = guardarVenta(venta);
                 if (orden){
                   orden.estado = 'cobrada';
