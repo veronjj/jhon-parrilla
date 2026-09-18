@@ -443,18 +443,27 @@ app.get('/eventos', (req, res) => {
   });
   res.flushHeaders();
   res.write('retry: 3000\n\n');         // si se cae, el navegador vuelve en 3 s
-  res.write('event: hola\ndata: {"ok":true}\n\n');
+  // El primer latido va de inmediato: así el aparato arranca su vigilancia sin
+  // esperar al primer intervalo, y sabe cada cuánto debe esperar el siguiente.
+  res.write('event: hola\ndata: {"ok":true,"latidoMs":' + LATIDO_MS + '}\n\n');
   oyentes.add(res);
   req.on('close', () => oyentes.delete(res));
 });
 
-// Latido: sin tráfico, un proxy cierra la conexión por inactividad y la
-// tablet se queda sorda sin enterarse.
+/* Latido. Cumple dos funciones y por eso va como evento con nombre y no como
+   comentario: mantiene viva la conexión frente a proxies que cierran por
+   inactividad, y —lo importante— le da al aparato una señal que puede
+   escuchar. Un comentario SSE el navegador lo descarta sin avisar a nadie, así
+   que con él la tablet no podía distinguir "no ha pasado nada" de "el canal
+   está muerto". Ese era el agujero: un celular que cambia de WiFi a datos
+   pierde el socket en silencio, y sin latido audible se quedaba mudo. */
+const LATIDO_MS = Number(process.env.LATIDO_MS || 15000);
 setInterval(() => {
+  const linea = 'event: latido\ndata: {"t":' + Date.now() + '}\n\n';
   for (const o of oyentes) {
-    try { o.write(': latido\n\n'); } catch (e) { oyentes.delete(o); }
+    try { o.write(linea); } catch (e) { oyentes.delete(o); }
   }
-}, 25000).unref();
+}, LATIDO_MS).unref();
 
 app.use((req, res, next) => {
   res.set('Access-Control-Allow-Origin', '*');
