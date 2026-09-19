@@ -4105,8 +4105,23 @@ const POS = {
           });
         });
         marca();
+        /* CORRECCIÓN DE RAÍZ (comanda con el valor duplicado): "Agregar al
+           pedido" y "Y enviar a cocina" cerraban el modal y llamaban a
+           confirmar() sin ningún cerrojo. En pantallas táctiles (tablet/
+           POS) un mismo toque puede disparar tanto "touchend" como
+           "click" sobre el mismo botón, o el operario alcanza a tocar dos
+           veces antes de que el modal desaparezca; cada disparo volvía a
+           ejecutar POS.add(...) (o sumaba de nuevo el precio a la línea
+           editada) y, si era "Y enviar a cocina", además duplicaba el
+           envío a POS.sendKitchen(), quedando el plato dos veces en el
+           carrito/la comanda y su valor sumado dos veces al total. Con
+           _confirmado, solo el primer disparo hace algo; los siguientes
+           se ignoran. */
+        let _confirmado = false;
         const confirmar = (enviar) => {
+          if (_confirmado) return;          // idempotente: un solo disparo
           if (!sel) return UI.toast('Elige la carne de la bandeja.','warn');
+          _confirmado = true;
           const texto = (ov.querySelector('#bNota').value||'').trim();
           // El modal se cierra primero: al enviar a cocina se abre el de la
           // comanda, y no deben quedar dos ventanas encima.
@@ -4973,11 +4988,57 @@ const POS = {
              '<button class="btn pri" id="doPay">Confirmar cobro y facturar</button>',
       onMount(ov, cls){
         const box = ov.querySelector('#payBox');
+        /* CORRECCIÓN DE RAÍZ (no se puede digitar de corrido en "monto" ni en
+           "el cliente paga con"): la versión anterior reconstruía TODO
+           box.innerHTML en cada tecla y luego intentaba devolver el foco al
+           input recién creado. Eso funciona en un mouse/teclado de escritorio,
+           pero en una tablet/POS táctil, destruir el <input> activo cierra el
+           teclado en pantalla aunque el foco de DOM se restaure a tiempo — el
+           navegador no vuelve a abrirlo solo, así que cada carácter exige un
+           toque nuevo para reabrir el teclado. La causa raíz real es volver a
+           crear el <input> en cada tecla; la solución de raíz es dejar de
+           hacerlo: los campos de "monto" y de "el cliente paga con" ahora se
+           crean UNA sola vez (en render(), cuando cambian filas/método) y
+           jamás se destruyen mientras se está escribiendo en ellos. Lo único
+           que se recalcula tecla a tecla — el cuadro de "falta/excedente" y
+           el resultado de la calculadora de cambio — vive en contenedores
+           aparte que no contienen ningún <input>, así que reconstruirlos no
+           le quita el foco a nada. */
+          const faltaHTML = () => {
+            const cubierto = pagos.reduce((a,p)=>a+(Number(p.monto)||0),0);
+            const falta = t.total - cubierto;
+            return '<div class="card" style="margin-top:12px;border-color:' + (Math.abs(falta)<1?'var(--line-soft)':'var(--ember-dim)') + '">' +
+              '<div class="row"><span class="mut" style="font-size:12.5px">' + (falta > 0 ? 'Falta por cubrir' : (falta < 0 ? 'Excedente registrado' : 'Cuenta cuadrada')) + '</span>' +
+              '<b class="num right" style="font-size:18px;color:' + (falta>0?'var(--ember-hi)':(falta<0?'var(--brass-hi)':'var(--ok)')) + '">' +
+              Util.money(Math.abs(falta)) + '</b></div></div>';
+          };
+          const cambioHTML = () => {
+            if (!(recibeCliente > 0)) return '';
+            const cambioRecibe = recibeCliente - t.total;
+            return '<div style="margin-top:10px;padding:10px 14px;border-radius:8px;background:' +
+                (cambioRecibe >= 0 ? 'rgba(62,155,98,.1)' : 'rgba(220,80,60,.08)') +
+                ';text-align:center">' +
+                '<div style="font-size:11px;color:var(--ash-dim)">' + (cambioRecibe >= 0 ? 'Devuelta al cliente' : 'Falta') + '</div>' +
+                '<div style="font-size:28px;font-weight:800;letter-spacing:-.02em;color:' +
+                  (cambioRecibe >= 0 ? 'var(--ok)' : 'var(--ember-hi)') + '">' +
+                  (cambioRecibe >= 0 ? Util.money(cambioRecibe) : '−' + Util.money(Math.abs(cambioRecibe))) +
+                '</div></div>';
+          };
+          /* Recalcula solo los cuadros derivados (falta/excedente y cambio),
+             sin tocar los <input> de monto ni el de "paga con". Se llama en
+             cada tecla. */
+          const actualizarTotales = () => {
+            const fc = box.querySelector('#payFaltaCard');
+            if (fc) fc.outerHTML = faltaHTML();
+            const cc = box.querySelector('#cambioResultado');
+            if (cc) cc.innerHTML = cambioHTML();
+          };
+          /* Reconstruye la estructura completa (filas de pago, método,
+             botones): solo se llama cuando cambia el NÚMERO de filas o el
+             método de pago — nunca por escribir un monto — así que perder el
+             foco aquí no afecta la escritura fluida. */
         const paint = () => {
-          const cubierto = pagos.reduce((a,p)=>a+(Number(p.monto)||0),0);
-          const falta = t.total - cubierto;
           const tieneEfectivo = pagos.some(p => p.metodo === 'Efectivo');
-          const cambioRecibe = recibeCliente > 0 ? recibeCliente - t.total : 0;
           box.innerHTML =
             '<div class="card" style="margin-bottom:12px"><div class="tot-row"><span>Subtotal</span><b>' + Util.money(t.subtotal) + '</b></div>' +
             (t.descuento?'<div class="tot-row"><span>Descuento</span><b>−' + Util.money(t.descuento) + '</b></div>':'') +
@@ -4992,8 +5053,19 @@ const POS = {
                 (pagos.length>1 ? '<button class="btn icon ghost" data-rm="' + i + '">' + Util.ico('x') + '</button>' : '') +
               '</div>').join('') +
             '<button class="btn sm ghost" id="addPay" style="margin-top:9px">' + Util.ico('plus') + ' Agregar forma de pago</button>' +
+            /* MEJORA: pago mixto (Comandas) — atajo que arma en un clic las
+               dos filas Efectivo + Transferencia, dejando que la cajera
+               digite manualmente cuánto corresponde a cada una. No crea
+               infraestructura nueva: reutiliza el mismo arreglo "pagos"
+               (varias filas metodo/monto) que ya alimenta correctamente el
+               cierre de caja y los reportes por forma de pago (ver
+               DB.ventasPorMetodo/porMetodo más abajo en el archivo), así
+               que el desglose queda interconectado sin tocar esa lógica. */
+            '<button class="btn sm ghost" id="mixPay" style="margin-top:9px;margin-left:8px">' + Util.ico('plus') + ' Pago mixto (efectivo + transferencia)</button>' +
 
-            /* Calculadora de cambio: se muestra cuando hay pago en efectivo */
+            /* Calculadora de cambio: se muestra cuando hay pago en efectivo.
+               El resultado va en su propio contenedor (#cambioResultado) para
+               poder actualizarlo tecla a tecla sin reconstruir el <input>. */
             (tieneEfectivo
               ? '<div class="card" style="margin-top:12px;border-color:var(--brass)">' +
                   '<div class="eyebrow" style="margin-bottom:8px">Calculadora de cambio</div>' +
@@ -5006,33 +5078,35 @@ const POS = {
                         'style="flex:1;min-width:80px;font-size:16px;font-weight:700;padding:12px 8px">' + Util.money(v,false) + '</button>'
                     ).join('') +
                   '</div>' +
-                  (recibeCliente > 0
-                    ? '<div style="margin-top:10px;padding:10px 14px;border-radius:8px;background:' +
-                        (cambioRecibe >= 0 ? 'rgba(62,155,98,.1)' : 'rgba(220,80,60,.08)') +
-                        ';text-align:center">' +
-                        '<div style="font-size:11px;color:var(--ash-dim)">' + (cambioRecibe >= 0 ? 'Devuelta al cliente' : 'Falta') + '</div>' +
-                        '<div style="font-size:28px;font-weight:800;letter-spacing:-.02em;color:' +
-                          (cambioRecibe >= 0 ? 'var(--ok)' : 'var(--ember-hi)') + '">' +
-                          (cambioRecibe >= 0 ? Util.money(cambioRecibe) : '−' + Util.money(Math.abs(cambioRecibe))) +
-                        '</div></div>'
-                    : '') +
+                  '<div id="cambioResultado">' + cambioHTML() + '</div>' +
                 '</div>'
               : '') +
 
-            '<div class="card" style="margin-top:12px;border-color:' + (Math.abs(falta)<1?'var(--line-soft)':'var(--ember-dim)') + '">' +
-              '<div class="row"><span class="mut" style="font-size:12.5px">' + (falta > 0 ? 'Falta por cubrir' : (falta < 0 ? 'Excedente registrado' : 'Cuenta cuadrada')) + '</span>' +
-              '<b class="num right" style="font-size:18px;color:' + (falta>0?'var(--ember-hi)':(falta<0?'var(--brass-hi)':'var(--ok)')) + '">' +
-              Util.money(Math.abs(falta)) + '</b></div></div>';
+            faltaHTML().replace('class="card"', 'class="card" id="payFaltaCard"');
           box.querySelectorAll('[data-met]').forEach(s => s.onchange = e => { pagos[+s.dataset.met].metodo = e.target.value; paint(); });
-          box.querySelectorAll('[data-mon]').forEach(inp => inp.oninput = () => { pagos[+inp.dataset.mon].monto = Number(inp.value)||0; paint(); });
+          box.querySelectorAll('[data-mon]').forEach(inp => inp.oninput = () => { pagos[+inp.dataset.mon].monto = Number(inp.value)||0; actualizarTotales(); });
           box.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { pagos.splice(+b.dataset.rm,1); paint(); });
           box.querySelector('#addPay').onclick = () => {
             const falta2 = t.total - pagos.reduce((a,p)=>a+(Number(p.monto)||0),0);
             pagos.push({metodo:'Tarjeta débito', monto: Math.max(0, falta2)}); paint();
           };
-          /* Handlers de la calculadora de cambio */
+          /* MEJORA: pago mixto — reemplaza las filas actuales por exactamente
+             dos: Efectivo y Transferencia, con el total dividido a la mitad
+             como punto de partida (redondeado a la unidad); la cajera edita
+             ambos montos con los mismos inputs numéricos de siempre y la
+             validación de "falta/excedente" ya existente (misma tolerancia
+             de $0.5 usada en #doPay) impide confirmar si la suma no cuadra. */
+          const btnMix = box.querySelector('#mixPay');
+          if (btnMix) btnMix.onclick = () => {
+            const mitad = Math.round(t.total/2);
+            pagos = [{metodo:'Efectivo', monto:mitad}, {metodo:'Transferencia', monto:t.total-mitad}];
+            paint();
+          };
+          /* Handlers de la calculadora de cambio: escribir aquí solo
+             actualiza el resultado (#cambioResultado), nunca reconstruye
+             este mismo <input>. */
           const inpRecibe = box.querySelector('#recibeBillete');
-          if (inpRecibe) inpRecibe.oninput = () => { recibeCliente = Number(inpRecibe.value)||0; paint(); };
+          if (inpRecibe) inpRecibe.oninput = () => { recibeCliente = Number(inpRecibe.value)||0; actualizarTotales(); };
           box.querySelectorAll('[data-bill]').forEach(b => b.onclick = () => {
             recibeCliente = parseInt(b.dataset.bill, 10);
             paint();
@@ -5067,6 +5141,18 @@ const POS = {
       costo:t.costo, total:t.total, pagos:pagos.map(p=>({metodo:p.metodo, monto:Number(p.monto)||0})),
       cambio, estado:'pagada', sync:false, act:Util.now()
     };
+    /* CORRECCIÓN DE RAÍZ (cierre de Domicilios en $0): cuando un pedido tipo
+       'domicilio' se cobra desde la pantalla general de Vender (no desde el
+       formulario propio de Domicilios), la venta nunca quedaba marcada con
+       el turno de domicilios activo (domTurnoId). Domicilios.turnoTotals()
+       solo la contaba si el userId y la fecha caían justo en la ventana del
+       turno; si otra persona cobraba, o el turno se abría/cerraba en medio,
+       la venta se perdía y el resumen de cierre salía en $0. Se sella aquí
+       el mismo turno que usa el "Cobrar" del módulo Domicilios. */
+    if (venta.tipo === 'domicilio'){
+      const turnoDom = Domicilios.turnoDeCobro(venta);
+      if (turnoDom) venta.domTurnoId = turnoDom.id;
+    }
 
     // 1. Descuento de inventario en gramos, por corte
     const consumo = {};
