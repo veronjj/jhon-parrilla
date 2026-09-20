@@ -1992,7 +1992,59 @@ const Sync = {
   running:false, lastAt:null, lastError:null, cursor:null, _poll:null, _fallos:0,
   enVivo:false, _es:null, _visto:0, _ojo:null, _reint:null,
 
+  /* ── Estado de la puesta al día automática ──────────────────────────
+     `faltan`     el servidor todavía tiene cambios más allá de esta página
+     `alDia`      este equipo ya alcanzó la cabeza del servidor
+     `baseAt`     última reconciliación completa contra /estado
+     `hidratando` hay una reconciliación en curso (no lanzar otra encima)  */
+  faltan:false, alDia:false, baseAt:null, hidratando:false, _huella:null, _cursorCargado:false,
+
+  /* Candado de arranque. Mientras está puesto, ningún disparador suelto
+     —el canal en vivo al abrirse, el sondeo, una operación encolada— puede
+     adelantarse a la primera puesta al día. Sin esto, el canal abría y
+     lanzaba un `run()` que llenaba la base ANTES de que la hidratación
+     decidiera qué clase de equipo era este; un aparato recién instalado
+     terminaba tomando el camino de "equipo con datos" y empujaba al
+     servidor sus usuarios y categorías de fábrica, pisando los buenos. */
+  bloqueado:false,
+
+  /* Colecciones que viajan al servidor. Es exactamente el juego que el
+     backend ya acepta hoy: no se agregan entidades nuevas para no arriesgar
+     que el servidor rechace un lote entero y la cola quede represada.
+     `config` se recibe pero nunca se empuja sola: el consecutivo y el nombre
+     del equipo son de cada aparato y no deben pisarse entre tablets. */
+  COLECCIONES:['users','categories','products','meats','staff','clients','sales','orders','purchases','cash','meals'],
+  TOPE_EMPUJE:800,
+
   activo(){ return !!(DB.d.config.endpoint||'').trim(); },
+
+  /* ── Cursor persistente ───────────────────────────────────────────────
+     El cursor marca hasta dónde leyó este equipo el diario de cambios del
+     servidor. Antes vivía solo en memoria: al recargar la página volvía a
+     cero y el aparato releía siempre el mismo tramo inicial sin alcanzar
+     nunca lo de hoy. Ahora se guarda junto al servidor al que pertenece,
+     de modo que cambiar de servidor lo descarta en vez de arrastrarlo. */
+  _clave(){ return 'jp_sync_cursor'; },
+  async cargarCursor(){
+    this._cursorCargado = true;
+    try{
+      const g = await Persist.get(this._clave());
+      if (g && g.ep === (DB.d.config.endpoint||'').trim()){
+        this.cursor = g.cursor != null ? g.cursor : null;
+        this.baseAt = g.baseAt || null;
+        return this.cursor;
+      }
+    }catch(e){}
+    this.cursor = null; this.baseAt = null;
+    return null;
+  },
+  async guardarCursor(){
+    try{
+      await Persist.set(this._clave(), {
+        ep:(DB.d.config.endpoint||'').trim(), cursor:this.cursor, baseAt:this.baseAt
+      });
+    }catch(e){ /* si el disco falla, la sesión sigue: se recupera al reconciliar */ }
+  },
 
   /** Dirección desde la que se abrió la aplicación. Si el archivo lo sirve el
       servidor del local, esa misma dirección ES el servidor: no hay que teclear nada. */
@@ -2018,7 +2070,12 @@ const Sync = {
   async autoconfigurar(){
     const o = this.origen();
     if (!o) return null;
-    const info = await this.probar(o, 3500);
+    /* Espera más larga que antes: el servidor de Render se duerme cuando no
+       hay nadie vendiendo y el primer arranque del día tarda en contestar.
+       Con 3,5 segundos, una tablet nueva se rendía y quedaba de equipo
+       independiente para siempre, aunque el servidor despertara un segundo
+       después. */
+    const info = await this.probar(o, 9000);
     if (!info) return null;
     // Se reescribe siempre: un aparato que venía apuntando a una IP del local
     // se endereza solo con abrir la dirección nueva.
@@ -2042,6 +2099,7 @@ const Sync = {
 
   async run(silent){
     if (this.running) return;
+    if (this.bloqueado){ if(!silent) UI.toast('El equipo se está poniendo al día. Un momento.','info'); return; }
     const q = DB.d.queue;
 
     if (!this.activo()){
@@ -2062,26 +2120,54 @@ const Sync = {
     }
 
     this.running = true; UI.refreshStatus();
-    const lote = q.slice(0, 200);
+    if (!this._cursorCargado) await this.cargarCursor();
     try{
-      const res = await fetch(this.url('/sync'), {
-        method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer ' + (Auth.token||'')},
-        body: JSON.stringify({sede:DB.d.config.sedeId, cursor:this.cursor, ops:lote})
-      });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const data = await res.json();
-      const ok = new Set(data.aceptadas || lote.map(o=>o.opId));
-      DB.d.queue = DB.d.queue.filter(o => !ok.has(o.opId));
-      DB.d.sales.forEach(x=>{ if (!x.sync && ok.has(x.opId)) x.sync = true; });
-      this.cursor = data.cursor != null ? data.cursor : this.cursor;
-      const n = this.applyBatch(data.cambios || []);
-      DB.touch('queue','sales');
-      this.lastAt = Util.now(); this.lastError = null; this._fallos = 0;
-      if(!silent) UI.toast('Sincronizado: ' + ok.size + ' enviadas, ' + n + ' recibidas.','ok');
+      /* ── INTERVENCIÓN (corrección de raíz) ─────────────────────────────
+         El servidor entrega el diario de cambios PAGINADO: como mucho 500
+         por respuesta, y avisa con `faltan:true` que todavía queda atrás.
+         Antes se pedía una sola página por ronda y el sondeo posterior se
+         saltaba las siguientes al creer que ya estaba al día, así que un
+         equipo con retraso se quedaba clavado en las primeras 500 y había
+         que traer la base a mano. Ahora se vacía la cola y se drena el
+         diario hasta el final en la misma corrida. Medido contra el
+         servidor real: 14.443 cambios desde cero = 7 páginas en ~3 s. */
+      let enviadas = 0, recibidas = 0, vueltas = 0;
+      const TOPE = 60;                       // freno duro: nunca un bucle infinito
+      while (vueltas < TOPE){
+        vueltas++;
+        const lote = DB.d.queue.slice(0, 200);
+        const previo = this.cursor;
+        const res = await fetch(this.url('/sync'), {
+          method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer ' + (Auth.token||'')},
+          body: JSON.stringify({sede:DB.d.config.sedeId, cursor:this.cursor, ops:lote})
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        const ok = new Set(data.aceptadas || lote.map(o=>o.opId));
+        DB.d.queue = DB.d.queue.filter(o => !ok.has(o.opId));
+        DB.d.sales.forEach(x=>{ if (!x.sync && ok.has(x.opId)) x.sync = true; });
+        this.cursor = data.cursor != null ? data.cursor : this.cursor;
+        enviadas += ok.size;
+        recibidas += this.applyBatch(data.cambios || []);
+        DB.touch('queue','sales');
+        this.lastAt = Util.now(); this.lastError = null; this._fallos = 0;
+
+        this.faltan = !!data.faltan;
+        const avanzo = this.cursor !== previo;
+        const quedaCola = DB.d.queue.length > 0 && ok.size > 0;
+        // Se sigue mientras el servidor diga que falta (y el cursor avance,
+        // para no repetir la misma página si el backend dejara de moverlo)
+        // o mientras queden operaciones nuestras por entregar.
+        if ((this.faltan && avanzo) || quedaCola) continue;
+        break;
+      }
+      this.alDia = !this.faltan && !DB.d.queue.length;
+      await this.guardarCursor();
+      if(!silent) UI.toast('Sincronizado: ' + enviadas + ' enviadas, ' + recibidas + ' recibidas.','ok');
       // Si mientras se enviaba entraron más operaciones, se despachan enseguida.
       if (DB.d.queue.length) setTimeout(()=>this.run(true), 250);
     }catch(err){
-      this.lastError = err.message; this._fallos++;
+      this.lastError = err.message; this._fallos++; this.alDia = false;
       DB.d.queue.forEach(o => { o.intentos++; o.error = err.message; });
       DB.touch('queue');
       // Solo se avisa una vez por caída, para no tapar la pantalla en pleno servicio.
@@ -2139,7 +2225,9 @@ const Sync = {
     DB.d.config.endpoint = endpoint;
     DB.d.queue = [];
     this.cursor = data.cursor;
+    this.baseAt = Util.now();
     await DB.saveAll();
+    await this.guardarCursor();   // así el próximo arranque no repite la descarga
     DB.log('sync:unir','Este equipo tomó la base del servidor ' + endpoint);
   },
 
@@ -2162,8 +2250,359 @@ const Sync = {
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
     this.cursor = data.cursor;
+    this.baseAt = Util.now();
     DB.d.queue = []; DB.touch('queue');
+    await this.guardarCursor();
     DB.log('sync:publicar','Base publicada al servidor');
+  },
+
+  /* ══ Puesta al día automática ═══════════════════════════════════════
+     Todo lo que sigue existe para que nadie tenga que tocar "Publicar" ni
+     "Traer los datos". Abrir la dirección del restaurante basta.
+     Los botones manuales siguen ahí y siguen haciendo lo mismo: esto es
+     un camino nuevo encima, no un reemplazo.
+     ------------------------------------------------------------------ */
+
+  /** Fusión de una colección completa, por id y último-en-escribir-gana.
+      Se hace con un índice en vez de buscar registro por registro: con 1.400
+      ventas la búsqueda lineal recorría dos millones de posiciones. */
+  mergeColeccion(entidad, lista){
+    if (!Array.isArray(lista) || !lista.length) return 0;
+    const col = DB.d[entidad];
+    if (!Array.isArray(col)) return 0;
+    const idx = new Map();
+    col.forEach((r, i) => { if (r && r.id != null) idx.set(r.id, i); });
+    let n = 0;
+    lista.forEach(r => {
+      if (!r || r.id == null) return;
+      const i = idx.get(r.id);
+      if (i === undefined){ idx.set(r.id, col.length); col.push(r); n++; return; }
+      /* Lo de fábrica sin tocar cede siempre. Su fecha se sella al abrir la
+         aplicación, así que ganaría el último-en-escribir-gana y dejaría a la
+         tablet mostrando los perfiles de la plantilla en vez de los del
+         restaurante. */
+      if (this.deFabrica(entidad, col[i])){ col[i] = r; n++; return; }
+      // Fuera de ese caso, solo pisa lo local si lo del servidor es más reciente.
+      if (!col[i].act || (r.act||'') > col[i].act){ col[i] = Object.assign({}, col[i], r); n++; }
+    });
+    if (n) DB.touch(entidad);
+    return n;
+  },
+
+  /** Cuántos registros sincronizables tiene este equipo. Sirve de huella
+      barata contra el `registros` que informa /salud. */
+  contarLocal(){
+    return this.COLECCIONES.reduce((a, k) => a + ((DB.d[k]||[]).length), 0);
+  },
+
+  /** ¿Vale la pena conservar lo que hay en este equipo? Un aparato recién
+      instalado trae solo los perfiles de fábrica y la carta vacía. */
+  tieneDatosPropios(){
+    return (DB.d.products||[]).length > 0 || (DB.d.sales||[]).length > 0 ||
+           (DB.d.orders||[]).length > 0 || (DB.d.meats||[]).length > 0 ||
+           (DB.d.staff||[]).length > 0 || (DB.d.queue||[]).length > 0;
+  },
+
+  /** ¿Este registro es sencillamente uno de los de fábrica, sin tocar?
+
+      Importa mucho al conectar un equipo que venía trabajando solo. Los
+      perfiles, las categorías y el cliente genérico que trae la aplicación
+      recién instalada llevan los MISMOS identificadores en todas partes
+      (u_adm, c_ban, cl_1…) y su fecha se sella al abrir el archivo, así que
+      siempre parecen "lo más reciente". Si se dejaran subir, el último-en-
+      escribir-gana los daría por buenos y el administrador del restaurante
+      volvería a llamarse como el de la plantilla en todas las tablets.
+      Solo se comparan los campos con significado: la fecha y la clave no
+      cuentan, porque son justo lo que cambia sin que nadie edite nada. */
+  _fabrica:null,
+  deFabrica(entidad, r){
+    if (!this._fabrica){
+      const d = DB.defaults();
+      this._fabrica = {};
+      ['users','categories','clients'].forEach(k => {
+        const m = new Map();
+        (d[k]||[]).forEach(x => m.set(x.id, x));
+        this._fabrica[k] = m;
+      });
+    }
+    const m = this._fabrica[entidad];
+    if (!m) return false;
+    const def = m.get(r.id);
+    if (!def) return false;
+    const limpia = o => {
+      const c = Object.assign({}, o);
+      delete c.act; delete c.pin; delete c.sync; delete c.opId;
+      return JSON.stringify(c);
+    };
+    return limpia(def) === limpia(r);
+  },
+
+  /** Encola varias operaciones de una vez sin disparar un envío por cada una. */
+  encolarLote(items){
+    if (!items.length) return 0;
+    items.forEach(it => DB.d.queue.push({
+      opId:Util.uid('op'), entidad:it.entidad, op:it.op, payload:it.payload, ts:Util.now(),
+      sede:DB.d.config.sedeId, user:(Auth.user||{}).id||null, intentos:0, error:null
+    }));
+    DB.touch('queue');
+    return items.length;
+  },
+
+  /** Reconciliación completa contra /estado.
+
+      Es la red de seguridad que reemplaza los dos botones manuales:
+        · Equipo nuevo  → toma la base del servidor tal cual (como "Traer").
+        · Equipo con datos → fusiona sin borrar nada y sube lo que el
+          servidor no tenga o tenga más viejo (como "Publicar", pero sin
+          arrasar con lo ajeno).
+        · Servidor vacío → este equipo siembra la base (como "Publicar").
+      Devuelve un resumen para poder contarlo en pantalla. */
+  async hidratar(opts){
+    const o = opts || {};
+    if (!this.activo()) return null;
+    if (this.hidratando) return null;
+    this.hidratando = true;
+    UI.refreshStatus();
+    const resumen = {recibidos:0, enviados:0, modo:'fusion'};
+    try{
+      // Con corte de espera: si el servidor se queda colgado, se suelta el
+      // candado de arranque en vez de dejar la sincronización muerta.
+      const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const corte = setTimeout(()=>{ if (ctrl) ctrl.abort(); }, 45000);
+      let res;
+      try{ res = await fetch(this.url('/estado'), ctrl ? {signal:ctrl.signal} : {}); }
+      finally{ clearTimeout(corte); }
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      const est = data.estado || {};
+      const hayUsuarios = Array.isArray(est.users) && est.users.filter(u => u && u.activo && !u.borrado).length > 0;
+
+      /* Qué clase de equipo es este se decide con lo que había ANTES de
+         tocar la red. Si se recalculara ahora, cualquier dato que hubiera
+         entrado mientras se pedía /estado cambiaría la respuesta. */
+      const propios = (o.propios !== undefined) ? !!o.propios : this.tieneDatosPropios();
+      const copiar  = (o.copiar  !== undefined) ? !!o.copiar  : (!!o.virgen && !propios);
+
+      /* ── Servidor todavía sin base ── */
+      if (!est.config || !hayUsuarios){
+        if (propios){
+          // Sembrar sin `forzar`: si el servidor ya tuviera algo devuelve 409
+          // y no se toca nada. Solo llena un servidor realmente vacío.
+          try{
+            await this.publish(false);
+            resumen.modo = 'siembra';
+            DB.log('sync:auto-sembrar','El servidor estaba vacío: este equipo publicó la base');
+          }catch(e){ if (!e.yaTieneDatos) throw e; }
+        }
+        this.baseAt = Util.now();
+        await this.guardarCursor();
+        return resumen;
+      }
+
+      /* ── Equipo nuevo: la base del servidor entra tal cual ── */
+      if (copiar){
+        const endpoint = DB.d.config.endpoint;
+        Object.keys(est).forEach(k => {
+          if (k === 'config') return;
+          if (Array.isArray(DB.d[k]) || DB.d[k] === undefined) DB.d[k] = est[k];
+        });
+        // La configuración se mezcla, no se sustituye: así no se pierden las
+        // migraciones ya aplicadas en este aparato ni su dirección.
+        DB.d.config = Object.assign({}, DB.d.config, est.config, {endpoint});
+        DB.d.queue = [];
+        this.cursor = data.cursor != null ? data.cursor : this.cursor;
+        this.baseAt = Util.now();
+        resumen.modo = 'copia';
+        resumen.recibidos = this.COLECCIONES.reduce((a,k)=>a+((est[k]||[]).length),0);
+        DB.touch.apply(DB, Object.keys(est));
+        await DB.saveAll();
+        // Los PINs del servidor pasan a ser el respaldo de este equipo.
+        try{ await Persist.set('jp_bk_pins', DB.d.users.map(u => ({id:u.id, usuario:u.usuario, pin:u.pin}))); }catch(e){}
+        await this.guardarCursor();
+        DB.log('sync:auto-traer','Equipo nuevo: tomó la base del servidor ' + endpoint);
+        return resumen;
+      }
+
+      /* ── Equipo con datos: fusión en los dos sentidos ── */
+      Object.keys(est).forEach(k => {
+        if (k === 'config') return;
+        resumen.recibidos += this.mergeColeccion(k, est[k]);
+      });
+      // Misma regla que ya usaba merge() para la configuración que llega por
+      // el diario: gana la más reciente y el endpoint es propio de cada tablet.
+      if (est.config) this.merge({entidad:'config', data:est.config});
+
+      /* Lo que el servidor no tiene, o tiene más viejo, sube solo.
+
+         Un equipo que nunca ha trabajado no sube NADA: lo único que tendría
+         para ofrecer son los perfiles y las categorías de fábrica, y como
+         comparten identificador con los buenos (u_adm, cl_1…) y llevan una
+         fecha recién puesta, ganarían el último-en-escribir-gana y
+         reemplazarían los del restaurante en todas las tablets. */
+      const subir = [];
+      // Lo que ya está esperando en la cola no se vuelve a encolar.
+      const enCola = new Set();
+      (DB.d.queue||[]).forEach(op => { if (op && op.payload && op.payload.id != null) enCola.add(op.entidad + '\u0000' + op.payload.id); });
+      if (propios) this.COLECCIONES.forEach(k => {
+        const remoto = new Map();
+        (est[k]||[]).forEach(r => { if (r && r.id != null) remoto.set(r.id, r); });
+        (DB.d[k]||[]).forEach(r => {
+          if (!r || r.id == null || subir.length >= this.TOPE_EMPUJE) return;
+          if (enCola.has(k + '\u0000' + r.id)) return;
+          if (this.deFabrica(k, r)) return;
+          const s = remoto.get(r.id);
+          if (!s) subir.push({entidad:k, op:'create', payload:r});
+          else if ((r.act||'') > (s.act||'')) subir.push({entidad:k, op:'update', payload:r});
+        });
+      });
+      resumen.enviados = this.encolarLote(subir);
+
+      this.cursor = data.cursor != null ? data.cursor : this.cursor;
+      this.baseAt = Util.now();
+      await this.guardarCursor();
+      if (resumen.recibidos || resumen.enviados)
+        DB.log('sync:reconciliar', resumen.recibidos + ' registros recibidos, ' + resumen.enviados + ' puestos en cola');
+      return resumen;
+    }catch(err){
+      this.lastError = err.message;
+      if (!o.silencioso) UI.toast('No se pudo poner al día con el servidor: ' + err.message,'bad', 5000);
+      return null;
+    }finally{
+      this.hidratando = false;
+      UI.refreshStatus();
+      if (State.view === 'sync') Router.render();
+    }
+  },
+
+  /** Arranque: lo único que hace falta es abrir la dirección.
+      Devuelve cuando el equipo ya está al día, o cuando se agota la espera
+      razonable — en ese caso la puesta al día sigue sola por detrás y la
+      aplicación abre igual, nunca se queda trabada esperando al servidor. */
+  async arranque(virgen){
+    /* La foto de cómo llegó este equipo se toma ANTES de abrir el canal en
+       vivo y antes de pedir nada: es lo que decide si toma la base del
+       servidor o la fusiona con la suya. */
+    const propios = this.tieneDatosPropios();
+    let conectado = false;
+    const trabajo = (async () => {
+      this.bloqueado = true;
+      try{
+        const info = await this.autoconfigurar();
+        if (!info || !this.activo()){
+          // No contestó: se sigue tocando la puerta por detrás sin estorbar.
+          this.bloqueado = false;
+          this.insistirConexion();
+          return;
+        }
+        conectado = true;
+        await this.cargarCursor();
+        // Hace falta la base completa si este equipo nunca la tomó de este
+        // servidor, si llega en blanco, o si perdió el cursor.
+        const primeraVez = this.cursor == null || !this.baseAt || (virgen && !propios);
+        if (primeraVez)
+          await this.hidratar({copiar:(!!virgen && !propios), propios, silencioso:true});
+      }catch(e){ /* el arranque nunca se cae por culpa del servidor */ }
+      finally{ this.bloqueado = false; }
+      /* Solo se concilia si de verdad hay servidor. Sin él, `run` toma el
+         camino de "equipo único" y da la cola por conciliada: en el arranque
+         eso borraría operaciones que todavía no ha visto nadie. */
+      if (!this.activo()) return;
+      await this.run(true);
+      this.vigilar();
+    })();
+
+    // Tope de espera: si el servidor de Render viene despertando, la pantalla
+    // de acceso sale igual y la sincronización termina por detrás.
+    let aTiempo = true;
+    await Promise.race([trabajo, new Promise(r => setTimeout(()=>{ aTiempo = false; r(); }, 12000))]);
+    return {aTiempo, conectado};
+  },
+
+  /** El servidor dormido no puede costar el día de trabajo.
+
+      Si la página vino de una dirección web pero el servidor no contestó a
+      tiempo —Render tarda en despertar—, este equipo NO se resigna a quedar
+      independiente: sigue tocando la puerta por detrás, con esperas cada vez
+      más largas, mientras la aplicación funciona con normalidad. En cuanto
+      contesta, se configura, se pone al día y avisa. */
+  _reconexion:null,
+  ESPERAS:[3000, 5000, 8000, 12000, 20000, 30000, 30000, 30000, 30000, 30000],
+  insistirConexion(){
+    clearTimeout(this._reconexion);
+    if (this.activo() || !this.origen()) return;
+    let i = 0;
+    const intento = async () => {
+      if (this.activo()) return;
+      const o = this.origen();
+      const info = await this.probar(o, 12000);
+      if (!info){
+        if (i < this.ESPERAS.length) this._reconexion = setTimeout(intento, this.ESPERAS[i++]);
+        return;
+      }
+      const propios = this.tieneDatosPropios();
+      DB.d.config.endpoint = o; DB.touch('config');
+      this.bloqueado = true;
+      try{
+        this.escuchar(); this.startPolling();
+        await this.cargarCursor();
+        await this.hidratar({copiar:!propios, propios, silencioso:true});
+      }catch(e){ /* si falla, el sondeo normal sigue intentando */ }
+      finally{ this.bloqueado = false; }
+      await this.run(true);
+      this.vigilar();
+      UI.toast('Conectado con el servidor del restaurante. El equipo ya está al día.','ok', 5000);
+      if (State.view === 'sync') Router.render();
+    };
+    this._reconexion = setTimeout(intento, this.ESPERAS[i++]);
+  },
+
+  /** Puesta al día de ocasión: al volver de segundo plano, al reconectar o
+      al entrar a una pantalla que depende de datos frescos. */
+  async puestaAlDia(){
+    if (!this.activo() || !navigator.onLine || !DB.d.config.autoSync) return;
+    if (!this.enVivo) this.escuchar();
+    await this.run(true);
+    await this.comprobarHuella();
+  },
+
+  /** Huella barata: /salud dice cuántos registros tiene el servidor. Si nos
+      lleva ventaja, algo se perdió por el camino (diario recortado, cursor
+      dañado, base restaurada) y se reconcilia con /estado. Es lo que
+      garantiza que el equipo converja aunque el diario falle. */
+  MARGEN_HUELLA: 0,          // solo cuenta que el servidor nos lleve ventaja
+  ESPERA_HUELLA: 600000,     // no se reconcilia por huella más de una vez cada 10 min
+  _ultimaHuella:0, _enVano:0,
+  async comprobarHuella(forzar){
+    if (!this.activo() || !navigator.onLine || this.hidratando || this.running) return false;
+    const info = await this.probar(DB.d.config.endpoint, 6000);
+    if (!info || typeof info.registros !== 'number') return false;
+    // Solo interesa el caso "al servidor le sobran registros que aquí no están".
+    // Si este equipo tiene de más, es trabajo propio sin enviar: eso lo resuelve
+    // la cola, no una descarga completa.
+    if (info.registros - this.contarLocal() <= this.MARGEN_HUELLA) return false;
+    /* Freno por si la cuenta del servidor y la de aquí no cuadran nunca del
+       todo (por ejemplo si allá se guardan cosas que aquí no viajan): tras
+       varias reconciliaciones que no traen nada, se va espaciando en vez de
+       bajar la base entera cada diez minutos para nada. */
+    const espera = this.ESPERA_HUELLA * (1 + this._enVano * 5);
+    if (!forzar && Date.now() - this._ultimaHuella < espera) return false;
+    this._ultimaHuella = Date.now();
+    const r = await this.hidratar({silencioso:true});
+    if (r && !r.recibidos && !r.enviados) this._enVano = Math.min(this._enVano + 1, 5);
+    else this._enVano = 0;
+    return true;
+  },
+
+  /** Vigilancia de fondo. El canal en vivo y el sondeo traen el día a día;
+      esto solo comprueba de vez en cuando que no se haya quedado atrás. */
+  INTERVALO_HUELLA: 300000,           // 5 minutos
+  vigilar(){
+    clearInterval(this._huella);
+    this._huella = setInterval(() => {
+      if (document.hidden && State.view !== 'kds') return;
+      if (!Auth.user || !DB.d.config.autoSync) return;
+      this.comprobarHuella();
+    }, this.INTERVALO_HUELLA);
   },
 
   /** Consulta periódica: es lo que hace que la comanda aparezca en cocina. */
@@ -2254,7 +2693,9 @@ const Sync = {
       if (!Auth.user || !this.activo() || !navigator.onLine || !DB.d.config.autoSync) return;
       if (document.hidden && State.view !== 'kds') return;
       const callado = !this.lastAt || (Date.now() - new Date(this.lastAt).getTime()) > 60000;
-      if (this.canalVivo() && !callado && !DB.d.queue.length) return;
+      // Si el servidor avisó que todavía quedan cambios atrás, no se descansa
+      // hasta alcanzarlo: es justo el caso que antes dejaba al equipo colgado.
+      if (this.canalVivo() && !callado && !DB.d.queue.length && !this.faltan) return;
       this.run(true);
     }, 20000);
   }
@@ -2702,6 +3143,8 @@ const Sesion = {
     document.getElementById('app').classList.remove('hide');
     Sync.escuchar();
     Sync.startPolling();
+    Sync.vigilar();
+    Sync.puestaAlDia();        // al entrar, lo primero es tener el día de hoy
     Respaldo.iniciar();
     Router.render();
     return true;
@@ -3265,8 +3708,12 @@ const UI = {
     const el = document.getElementById('netPill');
     if (!el) return;
     const on = navigator.onLine, q = Sync.pending();
-    const dot = Sync.running ? 'sync' : (on ? 'on' : 'off');
-    const txt = Sync.running ? 'Sincronizando…' : (on ? (q ? q + ' en cola' : 'En línea') : 'Sin conexión' + (q ? ' · ' + q : ''));
+    const ocupado = Sync.running || Sync.hidratando;
+    const dot = ocupado ? 'sync' : (on ? 'on' : 'off');
+    const txt = Sync.hidratando ? 'Poniendo al día…'
+      : Sync.running ? (Sync.faltan ? 'Trayendo lo pendiente…' : 'Sincronizando…')
+      : on ? (q ? q + ' en cola' : (Sync.activo() && Sync.alDia ? 'Al día' : 'En línea'))
+      : 'Sin conexión' + (q ? ' · ' + q : '');
     el.innerHTML = '<span class="dot ' + dot + '"></span>' + Util.esc(txt);
     el.title = 'Almacenamiento: ' + Persist.label();
   }
@@ -3396,6 +3843,8 @@ const Gate = {
     document.getElementById('app').classList.remove('hide');
     Sync.escuchar();
     Sync.startPolling();
+    Sync.vigilar();
+    Sync.puestaAlDia();        // al entrar, lo primero es tener el día de hoy
     Router.go(Auth.can('dash') ? 'dash' : (Auth.can('pos') ? 'pos' : 'kds'));
     UI.toast('Bienvenido, ' + Auth.user.nombre.split(' ')[0] + '.','ok');
   }
@@ -10595,8 +11044,10 @@ Views.sync = {
     const enLinea = navigator.onLine;
     const estado = !conectado ? {t:'Este equipo trabaja solo', d:'bad', s:'Nadie más ve sus ventas ni sus comandas.'}
       : !enLinea ? {t:'Sin conexión con el servidor', d:'off', s:'Puedes seguir vendiendo: todo se envía al reconectar.'}
+      : Sync.hidratando ? {t:'Poniendo el equipo al día', d:'sync', s:'Trayendo la base completa del servidor.'}
+      : Sync.faltan ? {t:'Alcanzando al servidor', d:'sync', s:'Quedan cambios por recibir. Termina solo.'}
       : q.length ? {t:'Enviando información', d:'sync', s:q.length + ' operaciones en camino.'}
-      : {t:'Todo sincronizado', d:'on', s:'Las comandas y las ventas viajan al instante.'};
+      : {t:'Todo sincronizado', d:'on', s:'Las comandas y las ventas viajan al instante. No hay que subir ni bajar nada a mano.'};
 
     return '<div class="view-head"><div><div class="eyebrow">Equipos del restaurante</div>' +
       '<h2>Sincronización</h2></div></div>' +
@@ -10616,6 +11067,8 @@ Views.sync = {
             (Sync.lastAt ? Util.time(Sync.lastAt) : '—') + '</b></span>' +
           '<span class="mut" style="font-size:12px">Este equipo es <b>' +
             Util.esc(DB.d.config.nombreEquipo || 'sin nombre') + '</b></span>' +
+          '<span class="mut" style="font-size:12px">Puesta al día completa <b class="num">' +
+            (Sync.baseAt ? Util.time(Sync.baseAt) : '—') + '</b></span>' +
         '</div>' : '') +
       '</div>' +
 
@@ -10652,15 +11105,24 @@ Views.sync = {
           UI.kpi('Ventas sin confirmar', String(DB.d.sales.filter(x=>!x.sync).length), 'Guardadas en este equipo') +
           UI.kpi('Aviso en vivo', Sync.enVivo ? 'Conectado' : 'Reconectando',
                  Sync.enVivo ? 'El servidor avisa al instante' : 'Mientras tanto se consulta cada 20 s') +
+          UI.kpi('Registros', Sync.contarLocal().toLocaleString('es-CO') +
+                 ((Equipo.info && typeof Equipo.info.registros === 'number')
+                   ? ' / ' + Equipo.info.registros.toLocaleString('es-CO') : ''),
+                 (Equipo.info && typeof Equipo.info.registros === 'number')
+                   ? 'En este equipo / en el servidor' : 'En este equipo') +
           UI.kpi('Almacenamiento', Persist.label(), Sync.lastError ? 'Error: ' + Sync.lastError : 'Funcionando') +
         '</div>' +
         '<div class="card" style="margin-bottom:14px">' +
           '<div class="eyebrow" style="margin-bottom:10px">Puesta en marcha</div>' +
           '<div class="row wrap" style="gap:9px">' +
+            '<button class="btn gold" id="sRec">Poner al día ahora</button>' +
             '<button class="btn" id="sPub">Publicar mis datos al servidor</button>' +
             '<button class="btn" id="sJoin">Traer los datos del servidor</button></div>' +
-          '<p class="dim" style="font-size:11.5px;margin-top:9px">Publicar se hace una sola vez, desde el equipo que tiene ' +
-            'la carta buena. Traer reemplaza lo de este aparato por lo del servidor.</p>' +
+          '<p class="dim" style="font-size:11.5px;margin-top:9px">Normalmente no hace falta tocar nada: al abrir la dirección ' +
+            'el equipo se pone al día solo y sigue al día mientras esté abierto. ' +
+            '<b>Poner al día ahora</b> repite esa revisión sin borrar nada de este aparato. ' +
+            'Los otros dos quedan como último recurso: <b>Publicar</b> impone la base de este equipo al servidor y ' +
+            '<b>Traer</b> reemplaza la de este aparato por la del servidor.</p>' +
         '</div>' +
         '<div class="card pad0"><div class="card-h"><h3>Cola de operaciones</h3>' +
           (q.length ? '<button class="btn sm right" id="qclear" style="color:var(--ember-hi)">Descartar</button>' : '') + '</div>' +
@@ -10678,6 +11140,20 @@ Views.sync = {
     const bind = (id, fn) => { const el = document.getElementById(id); if (el) el.onclick = fn; };
     bind('sAhora', () => Sync.run());
     bind('sAvz', () => { State.filters.syncAvz = !State.filters.syncAvz; Router.render(); });
+
+    /* Repite a mano la misma revisión que corre sola al abrir: fusiona lo del
+       servidor con lo de aquí y encola lo que allá falte. No borra nada. */
+    bind('sRec', async () => {
+      UI.toast('Revisando contra el servidor…','info');
+      const r = await Sync.hidratar({});
+      if (!r) return;
+      await Sync.run(true);
+      UI.toast(r.modo === 'siembra' ? 'El servidor estaba vacío: se publicó la base de este equipo.'
+        : (r.recibidos || r.enviados)
+          ? 'Al día: ' + r.recibidos + ' registros recibidos y ' + r.enviados + ' enviados.'
+          : 'Ya estaba todo al día.','ok', 5000);
+      Router.render();
+    });
 
     bind('sPub', async () => {
       if (!(await UI.confirm('El servidor tomará la carta, el inventario, los usuarios y el histórico de este equipo ' +
@@ -11063,7 +11539,7 @@ const Demo = {
 
 /* --- 10. Arranque ---------------------------------------------------- */
 const Boot = {
-  installPrompt:null,
+  installPrompt:null, _veloSeguro:null,
 
   async start(){
     await Persist.init();
@@ -11075,8 +11551,15 @@ const Boot = {
     const reacomodar = Util.debounce(()=>{ if (Auth.user) Router.chrome(); }, 180);
     window.addEventListener('resize', reacomodar);
     window.addEventListener('orientationchange', () => setTimeout(reacomodar, 260));
-    // Si la aplicación se abrió desde el servidor, la conexión se configura sola.
-    await Sync.autoconfigurar();
+    /* Si la aplicación se abrió desde el servidor, la conexión se configura
+       sola Y el equipo se pone al día antes de pedir el PIN: quien entra por
+       la dirección del restaurante ya ve la carta, el inventario y las
+       comandas de hoy sin tocar ningún botón. */
+    this.velo(true);
+    let puesto = null;
+    try{ puesto = await Sync.arranque(virgen); }catch(e){ /* nunca traba el arranque */ }
+    this.velo(false);
+    const conServidor = Sync.activo() && !!puesto && puesto.conectado !== false;
 
     // Recargar la página no debe costar el trabajo hecho: se reanuda la sesión
     // anterior con su módulo y su pedido. Si caducó, se pide el PIN como siempre.
@@ -11086,15 +11569,69 @@ const Boot = {
       UI.toast('Seguimos donde ibas: ' + POS.cart.reduce((a,i)=>a+i.qty,0) +
         ' ítems en el pedido' + (POS.mesa ? ' de la mesa ' + POS.mesa : '') + '.','info', 4600);
 
-    if (virgen) setTimeout(()=>UI.toast('Sistema listo. Ingresa con cualquier perfil usando el PIN 1234.','info', 6000), 700);
+    if (virgen && !conServidor)
+      setTimeout(()=>UI.toast('Sistema listo. Ingresa con cualquier perfil usando el PIN 1234.','info', 6000), 700);
+    else if (virgen && conServidor)
+      setTimeout(()=>UI.toast('Equipo conectado al restaurante. Entra con tu PIN de siempre.','ok', 6000), 700);
+    if (conServidor && puesto && !puesto.aTiempo)
+      UI.toast('El servidor está despertando. Puedes entrar: la información termina de llegar sola.','info', 6000);
+  },
+
+  /** Velo de arranque. Se ve mientras el equipo se pone al día y desaparece
+      solo; si algo falla, el `finally` de start lo quita igual. Es texto
+      plano sobre el fondo de la aplicación: no depende de ninguna hoja de
+      estilos ni de que el resto de la interfaz ya esté dibujada. */
+  velo(mostrar){
+    if (!mostrar){
+      clearTimeout(this._veloSeguro);
+      /* Se quitan todos: si por cualquier camino quedara más de uno, ninguno
+         puede quedarse tapando la pantalla.
+
+         El orden importa. Primero se vuelve intocable (`pointer-events:none`)
+         y solo después se desvanece y se retira. Un velo a opacidad cero
+         sigue siendo una lámina encima de toda la pantalla: si el navegador
+         retrasa el temporizador de retirada —pasa en segundo plano, o con el
+         aparato ahogado— la aplicación se ve perfecta pero no responde a
+         ningún toque. Quitarle primero la captura del toque hace que ese
+         retraso no tenga consecuencias, y la retirada se intenta por tres
+         caminos para que no dependa de uno solo. */
+      document.querySelectorAll('#bootVelo').forEach(v => {
+        v.style.pointerEvents = 'none';
+        v.style.opacity = '0';
+        const quitar = () => { if (v.parentNode) v.parentNode.removeChild(v); };
+        try{ v.addEventListener('transitionend', quitar, {once:true}); }catch(e){}
+        setTimeout(quitar, 300);
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(()=>setTimeout(quitar, 0));
+      });
+      return;
+    }
+    let el = document.getElementById('bootVelo');
+    if (el) return;
+    /* Seguro de vida: pase lo que pase más arriba, el velo se va solo.
+       Nunca puede dejar el equipo mirando una pantalla negra. */
+    clearTimeout(this._veloSeguro);
+    this._veloSeguro = setTimeout(()=>Boot.velo(false), 20000);
+    el = document.createElement('div');
+    el.id = 'bootVelo';
+    el.setAttribute('style',
+      'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;' +
+      'flex-direction:column;gap:14px;background:#0C0B0A;color:#EFE7DA;' +
+      'font-family:inherit;transition:opacity .25s ease');
+    el.innerHTML =
+      '<div style="width:34px;height:34px;border:3px solid rgba(239,231,218,.18);' +
+        'border-top-color:#C8A24A;border-radius:50%;animation:bvGira .9s linear infinite"></div>' +
+      '<div style="font-size:14px;letter-spacing:.02em">Poniendo el equipo al día…</div>' +
+      '<div style="font-size:11.5px;opacity:.55">Trayendo la carta, el inventario y las comandas</div>' +
+      '<style>@keyframes bvGira{to{transform:rotate(360deg)}}</style>';
+    document.body.appendChild(el);
   },
 
   net(){
     const upd = (online) => {
       UI.refreshStatus();
       if (online){
-        UI.toast('Conexión recuperada. Enviando la cola pendiente.','ok');
-        if (DB.d.config.autoSync) Sync.run(true);
+        UI.toast('Conexión recuperada. Poniendo el equipo al día.','ok');
+        if (DB.d.config.autoSync) Sync.puestaAlDia();
       } else {
         UI.toast('Sin conexión. Puedes seguir vendiendo: todo queda guardado en el equipo.','warn', 4600);
       }
@@ -11104,9 +11641,10 @@ const Boot = {
     document.addEventListener('visibilitychange', ()=>{
       if (document.hidden) return Sesion.guardarYa();
       if (!Auth.user) return;
-      // Al volver de segundo plano el canal suele venir muerto: se rehace.
+      // Al volver de segundo plano el canal suele venir muerto: se rehace y,
+      // además, se comprueba que no se haya perdido nada mientras tanto.
       if (!Sync.enVivo) Sync.escuchar();
-      Sync.run(true);
+      Sync.puestaAlDia();
     });
     // En móviles la página se descarta sin avisar: se guarda antes de perderla
     window.addEventListener('pagehide', ()=>Sesion.guardarYa());
@@ -11114,7 +11652,7 @@ const Boot = {
       if (!Auth.user) return;
       // e.persisted = la página vuelve congelada de la caché del navegador.
       if (e.persisted || !Sync.enVivo) Sync.escuchar();
-      Sync.run(true);
+      Sync.puestaAlDia();
     });
     window.addEventListener('beforeunload', ()=>Sesion.guardarYa());
     setInterval(()=>{ if (navigator.onLine && DB.d.config.autoSync && Sync.pending()) Sync.run(true); }, 60000);
