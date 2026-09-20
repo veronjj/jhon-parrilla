@@ -2052,11 +2052,19 @@ const Sync = {
   LOTE_MAX:200, _tam:200, rechazadas:[], _pedido:false,
 
   /* Colecciones que viajan al servidor. Es exactamente el juego que el
-     backend ya acepta hoy: no se agregan entidades nuevas para no arriesgar
-     que el servidor rechace un lote entero y la cola quede represada.
+     backend ya acepta hoy: no se agregan entidades nuevas sin confirmar que
+     el servidor las reconoce, para no arriesgar que rechace un lote entero
+     y la cola quede represada para todos los equipos.
      `config` se recibe pero nunca se empuja sola: el consecutivo y el nombre
-     del equipo son de cada aparato y no deben pisarse entre tablets. */
-  COLECCIONES:['users','categories','products','meats','staff','clients','sales','orders','purchases','cash','meals','gastos','domiciliarios','domTurnos'],
+     del equipo son de cada aparato y no deben pisarse entre tablets.
+     CORRECCIÓN DE RAÍZ (auditoría: no se registran los movimientos de todos
+     los empleados): 'audit' faltaba en esta lista, así que el registro de
+     cada tablet se quedaba SOLO en esa tablet — nunca viajaba al servidor
+     ni a los demás equipos. Quien revisara Auditoría desde un único equipo
+     (p. ej. la caja) nunca veía lo que el personal hacía en las otras
+     tablets, aunque DB.log() sí se llamara correctamente en cada acción.
+     Se agrega 'audit' ahora que se confirmó que el servidor la acepta. */
+  COLECCIONES:['users','categories','products','meats','staff','clients','sales','orders','purchases','cash','meals','gastos','domiciliarios','domTurnos','audit'],
   TOPE_EMPUJE:800,
 
   /* El servidor confirma toda operación que le llega, incluso de entidades
@@ -2345,8 +2353,13 @@ const Sync = {
   async publish(forzar){
     if (!this.activo()) return UI.toast('Primero escribe la dirección del servidor.','warn');
     const estado = {};
+    /* CORRECCIÓN DE RAÍZ (auditoría: no se registran los movimientos de
+       todos los empleados) — ver el mismo comentario junto a COLECCIONES:
+       'audit' se agrega aquí también para que un equipo nuevo que se une al
+       servidor reciba el historial existente, y para que al publicar la
+       base desde este equipo el servidor también reciba su auditoría. */
     ['config','users','categories','products','meats','staff','clients','sales','orders','purchases','cash','meals',
-     'gastos','domiciliarios','domTurnos']
+     'gastos','domiciliarios','domTurnos','audit']
       .forEach(k => estado[k] = DB.d[k] || []);
     const res = await fetch(this.url('/sembrar'), {
       method:'POST', headers:{'Content-Type':'application/json'},
@@ -5458,6 +5471,26 @@ const POS = {
     if (!this.mesa) return this.askMesa(()=>POS.sendKitchen());
     const c = DB.d.config;
     let o = this.orderId ? DB.order(this.orderId) : null;
+    /* CORRECCIÓN DE RAÍZ (comanda y valor duplicados "en el sistema"):
+       esta pantalla no exige reabrir la mesa desde "Comandas" para
+       agregarle otra ronda — basta con escribir el mismo número de mesa
+       en "¿Para qué mesa?" y enviar a cocina. Si quien atiende hace eso
+       en vez de usar "Agregar" sobre la comanda ya abierta (o si otra
+       tablet acaba de crearla y a esta todavía no le llegó por la
+       sincronización), this.orderId queda vacío y el código de abajo no
+       tenía forma de saber que la mesa YA tenía una comanda abierta: creaba
+       una segunda, con su propio id. Cada comanda, vista o impresa por
+       separado, muestra su propio valor correcto — por eso el tiquete
+       siempre "sale bien" — pero la mesa queda con dos pedidos abiertos en
+       vez de uno, así que las listas, el KDS y el total de la mesa suman
+       ambos y todo se ve duplicado. Antes de crear una comanda nueva para
+       una mesa, se busca si ya hay una abierta para ese mismo número y, si
+       la hay, se usa esa (se le agrega la ronda) en vez de duplicarla —
+       igual que ya se hace aquí mismo cuando sí se conoce el id. */
+    if (!o && this.tipo === 'mesa' && this.mesa){
+      o = DB.ordersOf(this.mesa)[0] || null;
+      if (o) this.orderId = o.id;
+    }
     const ronda = o ? (Math.max(0, ...o.items.map(i=>i.ronda||1)) + 1) : 1;
     const nuevos = this.cart.map(i => ({
       lid:i.lid, pid:i.pid, nombre:i.nombre, precio:i.precio, qty:i.qty, gramos:i.gramos,
@@ -7663,7 +7696,16 @@ const Sales = {
     const caja = DB.openCash();
     if (caja){
       const ef = v.pagos.filter(p=>p.metodo==='Efectivo').reduce((a,p)=>a+p.monto,0);
-      if (ef) caja.movs.push({id:Util.uid('mv'), tipo:'egreso', fecha:Util.now(), concepto:'Anulación ' + v.numero, monto:-ef, metodo:'Efectivo', userId:(Auth.user||{}).id});
+      /* CORRECCIÓN DE RAÍZ (caja: doble descuento al anular una venta en efectivo):
+         este movimiento queda en caja.movs SOLO como rastro visible en "Movimientos
+         del turno" (para que se vea que hubo una anulación). Views.cash.totals()
+         NO lo debe sumar en "egresos": al pasar v.estado a 'anulada' la venta ya
+         desaparece de DB.paid(), así que "efectivoVentas"/"total" del turno ya
+         bajan solos por esa exclusión. Antes esta línea no llevaba ninguna marca,
+         y totals() la sumaba también dentro de "egresos", restando el valor de la
+         venta anulada DOS VECES del efectivo esperado. Se marca con
+         "reversionAnulacion" para que totals() la excluya de esa suma. */
+      if (ef) caja.movs.push({id:Util.uid('mv'), tipo:'egreso', fecha:Util.now(), concepto:'Anulación ' + v.numero, monto:-ef, metodo:'Efectivo', userId:(Auth.user||{}).id, reversionAnulacion:true});
     }
     v.estado = 'anulada'; v.anuladaEn = Util.now(); v.anuladaPor = (Auth.user||{}).id; v.act = Util.now(); v.sync = false;
     DB.touch('sales','meats','clients','cash');
@@ -10259,8 +10301,28 @@ Views.cash = {
     const total = ventas.reduce((a,s)=>a+s.total,0);
     const otrosMedios = Math.max(0, total - efectivoVentas - transferencias);
     const ingresos = c.movs.filter(m=>m.tipo==='ingreso').reduce((a,m)=>a+m.monto,0);
-    const egresos = c.movs.filter(m=>m.tipo==='egreso').reduce((a,m)=>a+m.monto,0);
-    const esperado = c.base + total + ingresos + egresos;
+    /* CORRECCIÓN DE RAÍZ (caja: doble descuento al anular una venta en efectivo):
+       se excluyen de "egresos" los movimientos marcados "reversionAnulacion"
+       (ver Sales.void). Esa venta ya no está en DB.paid(), así que su efectivo
+       ya se restó solo al recalcular "efectivoVentas"/"total" arriba; sumar
+       también su reversión aquí restaba el mismo valor dos veces del efectivo
+       esperado del turno. El movimiento se conserva en c.movs únicamente como
+       rastro visible en "Movimientos del turno". */
+    const egresos = c.movs.filter(m=>m.tipo==='egreso' && !m.reversionAnulacion).reduce((a,m)=>a+m.monto,0);
+    /* CORRECCIÓN DE RAÍZ (caja: "esperado" incluía pagos con tarjeta/otros
+       medios como si fueran efectivo en el cajón): el arqueo de "Cerrar Caja"
+       le pide al usuario "Total contado (efectivo + transferencias)" y el
+       ticket lo rotula "Efectivo esperado en el cajón" — es decir, el dinero
+       que debe estar físicamente contable (efectivo + transferencias
+       verificables por el negocio). Los pagos con datáfono/tarjeta
+       ("otrosMedios") nunca pasan por el cajón ni por las manos de quien
+       cierra: se liquidan aparte, directo al banco. Antes "esperado" sumaba
+       "total" (TODAS las ventas, incluidas las de tarjeta), así que cualquier
+       turno con ventas por datáfono mostraba una "diferencia" (faltante)
+       falsa por ese mismo valor, aunque la caja estuviera perfectamente
+       cuadrada. Se corrige a base + efectivo + transferencias + mov., que es
+       lo que la persona que cierra realmente puede contar y comparar. */
+    const esperado = c.base + efectivoVentas + transferencias + ingresos + egresos;
     /* INTERVENCIÓN (corrección de raíz): "egresos" solo suma los gastos
        pagados en Efectivo, porque son los únicos que de verdad mueven el
        cajón físico — eso está bien para el arqueo (esperado). Pero el
@@ -10271,8 +10333,19 @@ Views.cash = {
        DB.d.gastos (la fuente real, ya persistida) para TODO el turno,
        sin importar la forma de pago — este es el valor que deben usar
        el resumen, el PDF y los reportes. */
+    /* CORRECCIÓN DE RAÍZ (caja: gastos filtrados por rango de fecha en vez
+       de por caja): cada gasto ya guarda "cajaId" desde que se registra
+       (Views.gastos.nuevo), que identifica sin ambigüedad a QUÉ turno de
+       caja pertenece. Filtrar en cambio por "g.fecha >= c.apertura && (!c.cierre
+       || g.fecha <= c.cierre)" es el mismo patrón de bug ya corregido en otros
+       módulos: si el reloj de otro dispositivo está desfasado (la app
+       sincroniza entre varios equipos), un gasto puede quedar fuera de la
+       ventana de su propia caja, o colarse en la caja equivocada. Se usa
+       "cajaId" cuando existe, y solo se cae al rango de fecha para gastos
+       viejos guardados antes de que existiera ese campo. */
     const gastosTotal = (DB.d.gastos||[])
-      .filter(g => !g.borrado && g.fecha >= c.apertura && (!c.cierre || g.fecha <= c.cierre))
+      .filter(g => !g.borrado && (g.cajaId ? g.cajaId === c.id :
+        (g.fecha >= c.apertura && (!c.cierre || g.fecha <= c.cierre))))
       .reduce((a,g)=>a+(Number(g.valor)||0), 0);
     return {ventas, porMetodo, efectivoVentas, transferencias, otrosMedios, ingresos, egresos, esperado, total, gastosTotal};
   },
