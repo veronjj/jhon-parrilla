@@ -50,7 +50,14 @@ const VERSION = '2.0.0-mysql';
 const ENTIDADES = new Set([
   'config', 'users', 'categories', 'products', 'meats', 'staff',
   'clients', 'sales', 'orders', 'purchases', 'cash', 'meals',
-  'gastos', 'domiciliarios'
+  'gastos', 'domiciliarios',
+  /* Turnos de las encargadas del módulo Domicilios. La aplicación los venía
+     mandando desde siempre, pero al no estar en esta lista `aplicarOps` los
+     descartaba en silencio: /sync los confirmaba igual, así que la tablet los
+     daba por enviados y nadie se enteraba de que no viajaban. Como el esquema
+     es genérico —una fila por registro en `registros`— basta con nombrarlos
+     aquí: no hace falta tabla nueva ni migración. */
+  'domTurnos'
 ]);
 
 /* ── Diagnóstico de conexión ────────────────────────────────────────────
@@ -553,9 +560,23 @@ app.post('/sync', exigirDB, guardia(async (req, res) => {
     if (datos) cambios.push({ entidad: f.entidad, data: datos });
   });
 
+  /* `aceptadas` va con TODAS, a propósito: una operación que pierde el
+     conflicto por fecha tampoco se guarda, y si no se confirmara se quedaría
+     reenviándose para siempre desde la tablet.
+
+     Pero eso mismo escondía un agujero: una operación de una entidad que este
+     servidor no conoce también se confirmaba, y desaparecía sin dejar rastro.
+     `ignoradas` lo dice en voz alta, para que la aplicación pueda avisar en
+     pantalla en vez de creer que todo llegó. Es un campo añadido: una versión
+     anterior de la aplicación simplemente no lo mira. */
+  const ignoradas = lote
+    .filter(o => o && o.opId && !ENTIDADES.has(o.entidad))
+    .map(o => ({ opId: o.opId, entidad: o.entidad }));
+
   res.json({
     ok: true,
     aceptadas: lote.map(o => o && o.opId).filter(Boolean),
+    ignoradas,
     cursor: filas.length ? Number(filas[filas.length - 1].seq) : desde,
     cambios,
     faltan: filas.length === 500
