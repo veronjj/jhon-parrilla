@@ -10,7 +10,7 @@
 <meta name="apple-mobile-web-app-title" content="Jhon Parrilla">
 <!-- Se sube cada vez que se publica un cambio. El servidor la lee y la expone
      en /salud, para comparar de un vistazo qué versión tiene cada tablet. -->
-<meta name="app-version" content="2026.09.20">
+<meta name="app-version" content="2026.09.20.2">
 <title>Jhon Parrilla · POS</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230C0B0A'/><path d='M7 20h18M7 24h18' stroke='%23A3231C' stroke-width='2.4' stroke-linecap='round'/><path d='M11 8c0 3-3 3-3 6h16c0-3-3-3-3-6' stroke='%23C8A24A' stroke-width='2' fill='none' stroke-linecap='round'/></svg>">
 <style>
@@ -1974,10 +1974,47 @@ const DB = {
     this.touch('audit');
   }
 };
-DB._flush = Util.debounce(async function(){
-  const list = Array.from(DB._dirty); DB._dirty.clear();
-  for (const b of list) await DB.saveBucket(b);
-}, 350);
+/* ── Guardado en disco: espera corta, pero con tope ────────────────────
+   Antes esto era un temporizador que se reiniciaba con CADA escritura. La
+   idea era no escribir cien veces seguidas, y está bien; el problema es que
+   mientras los cambios no paren, el momento de escribir no llega nunca. Y en
+   pleno servicio no paran: cada plato que entra a una comanda, cada página de
+   cambios que baja del servidor —que trae hasta quinientos registros, uno
+   detrás de otro— vuelve a empujar el plazo hacia adelante. Si en ese rato la
+   tablet se recarga o se queda sin batería, todo lo que no se alcanzó a
+   escribir se pierde.
+
+   Ahora sigue esperando lo mismo cuando hay calma, pero con un tope: pase lo
+   que pase, nunca se está más de TOPE_MS sin escribir a disco.
+   ------------------------------------------------------------------- */
+DB._espera = 350;
+DB.TOPE_MS = 1500;
+DB._flushT = null; DB._flushDesde = 0; DB._flushando = false; DB._otraVez = false;
+
+DB._flush = function(){
+  const ahora = Date.now();
+  if (!DB._flushDesde) DB._flushDesde = ahora;
+  clearTimeout(DB._flushT);
+  const restante = DB._flushDesde + DB.TOPE_MS - ahora;
+  DB._flushT = setTimeout(DB._flushYa, Math.max(0, Math.min(DB._espera, restante)));
+};
+
+/** Escribe ya lo que esté pendiente. Se puede llamar a mano cuando la página
+    se va a segundo plano o se cierra, que es cuando más importa. */
+DB._flushYa = async function(){
+  clearTimeout(DB._flushT); DB._flushT = null; DB._flushDesde = 0;
+  // Si ya hay una escritura en curso, se anota para repetir al terminar en vez
+  // de solaparse: dos `saveBucket` a la vez sobre la misma clave se pisan.
+  if (DB._flushando){ DB._otraVez = true; return; }
+  DB._flushando = true;
+  try{
+    do{
+      DB._otraVez = false;
+      const list = Array.from(DB._dirty); DB._dirty.clear();
+      for (const b of list) await DB.saveBucket(b);
+    } while (DB._otraVez);
+  } finally { DB._flushando = false; }
+};
 
 /* ── 4. Sync ───────────────────────────────────────────────────────────
    Sincronización bidireccional contra el servidor del local.
@@ -1986,7 +2023,7 @@ DB._flush = Util.debounce(async function(){
    Toda operación es un upsert idempotente: reenviarla no duplica nada.
    Conflictos: gana la escritura con `act` más reciente.
    ------------------------------------------------------------------- */
-const APP_VERSION = '2026.09.20';
+const APP_VERSION = '2026.09.20.2';
 
 const Sync = {
   running:false, lastAt:null, lastError:null, cursor:null, _poll:null, _fallos:0,
@@ -2008,13 +2045,29 @@ const Sync = {
      servidor sus usuarios y categorías de fábrica, pisando los buenos. */
   bloqueado:false,
 
+  /* Tamaño del lote de envío. Baja solo cuando el servidor devuelve error,
+     para aislar a la operación que no le gusta, y vuelve a lo normal en
+     cuanto responde bien. `rechazadas` guarda las que hubo que apartar,
+     para poder mirarlas desde la pantalla de Sincronización. */
+  LOTE_MAX:200, _tam:200, rechazadas:[], _pedido:false,
+
   /* Colecciones que viajan al servidor. Es exactamente el juego que el
      backend ya acepta hoy: no se agregan entidades nuevas para no arriesgar
      que el servidor rechace un lote entero y la cola quede represada.
      `config` se recibe pero nunca se empuja sola: el consecutivo y el nombre
      del equipo son de cada aparato y no deben pisarse entre tablets. */
-  COLECCIONES:['users','categories','products','meats','staff','clients','sales','orders','purchases','cash','meals'],
+  COLECCIONES:['users','categories','products','meats','staff','clients','sales','orders','purchases','cash','meals','gastos','domiciliarios','domTurnos'],
   TOPE_EMPUJE:800,
+
+  /* El servidor confirma toda operación que le llega, incluso de entidades
+     que no sabe guardar: responde "aceptada" y la descarta sin dejar rastro
+     (se comprobó contra el servidor del restaurante con `domTurnos`). Como
+     no hay forma de preguntárselo, se averigua por la práctica: si en una
+     reconciliación se le enviaron registros de una colección y en la
+     siguiente ninguno está allá, es que no la guarda, y se deja de
+     insistir. Se olvida al recargar, así que el día que el servidor aprenda
+     a guardarlas, vuelven a viajar solas. */
+  noGuarda:{}, _empujado:{},
 
   activo(){ return !!(DB.d.config.endpoint||'').trim(); },
 
@@ -2098,8 +2151,20 @@ const Sync = {
   pending(){ return DB.d.queue.length; },
 
   async run(silent){
-    if (this.running) return;
-    if (this.bloqueado){ if(!silent) UI.toast('El equipo se está poniendo al día. Un momento.','info'); return; }
+    /* ── Ningún aviso se puede perder ──────────────────────────────────
+       El servidor avisa en cuanto alguien escribe. Si ese aviso llega
+       mientras esta tablet está a mitad de una sincronización, antes se
+       descartaba sin más: quedaba pendiente lo que acababa de pasar y el
+       sondeo de respaldo tampoco lo recogía, porque acababa de sincronizar
+       y se creía al día. Resultado: hasta un minuto de retraso para una
+       comanda que en cocina se espera al instante. Ahora el aviso se
+       apunta y se atiende en cuanto termina lo que estaba haciendo. */
+    if (this.running){ this._pedido = true; return; }
+    if (this.bloqueado){
+      this._pedido = true;
+      if(!silent) UI.toast('El equipo se está poniendo al día. Un momento.','info');
+      return;
+    }
     const q = DB.d.queue;
 
     if (!this.activo()){
@@ -2121,6 +2186,7 @@ const Sync = {
 
     this.running = true; UI.refreshStatus();
     if (!this._cursorCargado) await this.cargarCursor();
+    let lote = [];
     try{
       /* ── INTERVENCIÓN (corrección de raíz) ─────────────────────────────
          El servidor entrega el diario de cambios PAGINADO: como mucho 500
@@ -2135,14 +2201,26 @@ const Sync = {
       const TOPE = 60;                       // freno duro: nunca un bucle infinito
       while (vueltas < TOPE){
         vueltas++;
-        const lote = DB.d.queue.slice(0, 200);
+        lote = DB.d.queue.slice(0, this._tam || this.LOTE_MAX);
         const previo = this.cursor;
         const res = await fetch(this.url('/sync'), {
           method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer ' + (Auth.token||'')},
           body: JSON.stringify({sede:DB.d.config.sedeId, cursor:this.cursor, ops:lote})
         });
-        if (!res.ok) throw new Error('HTTP ' + res.status);
+        if (!res.ok){ const e = new Error('HTTP ' + res.status); e.delServidor = true; throw e; }
         const data = await res.json();
+        this._tam = this.LOTE_MAX;           // el servidor responde bien: lote normal
+        /* El servidor dice cuáles confirmó pero no sabe guardar. Con eso, lo
+           que antes tardaba dos reconciliaciones en descubrirse se sabe al
+           instante. Si el servidor es de una versión anterior no manda este
+           dato y se sigue averiguando por la vía lenta. */
+        (data.ignoradas || []).forEach(x => {
+          const ent = x && (x.entidad || x);
+          if (ent && !this.noGuarda[ent]){
+            this.noGuarda[ent] = true;
+            DB.log('sync:no-guarda', 'El servidor no guarda "' + ent + '": deja de enviarse hasta que lo soporte.');
+          }
+        });
         const ok = new Set(data.aceptadas || lote.map(o=>o.opId));
         DB.d.queue = DB.d.queue.filter(o => !ok.has(o.opId));
         DB.d.sales.forEach(x=>{ if (!x.sync && ok.has(x.opId)) x.sync = true; });
@@ -2169,6 +2247,36 @@ const Sync = {
     }catch(err){
       this.lastError = err.message; this._fallos++; this.alDia = false;
       DB.d.queue.forEach(o => { o.intentos++; o.error = err.message; });
+
+      /* ── Una operación envenenada no puede parar el restaurante ────────
+         Si el servidor devuelve error por UNA operación concreta —un campo
+         que no le gusta, una entidad que no conoce— el lote entero falla y
+         se reintenta igual para siempre: las ventas del día se quedarían
+         detrás de ella sin llegar nunca. Así que ante un error del servidor
+         (no ante una caída de red, que es cosa distinta) el lote se va
+         partiendo hasta aislar a la culpable, y cuando una sola operación
+         falla tres veces ella sola, se aparta y la cola sigue corriendo.
+         Nada se pierde: el registro sigue en este equipo y queda anotado en
+         la auditoría para poder revisarlo. */
+      if (err.delServidor){
+        lote.forEach(o => { o.fallosServidor = (o.fallosServidor||0) + 1; });
+        if (lote.length === 1 && (lote[0].fallosServidor||0) >= 3){
+          const mala = lote[0];
+          DB.d.queue = DB.d.queue.filter(o => o.opId !== mala.opId);
+          this.rechazadas.unshift({
+            entidad:mala.entidad, op:mala.op,
+            ref:(mala.payload && (mala.payload.numero || mala.payload.nombre || mala.payload.id)) || '—',
+            error:err.message, ts:Util.now()
+          });
+          if (this.rechazadas.length > 50) this.rechazadas.length = 50;
+          DB.log('sync:apartada', 'El servidor rechazó ' + mala.entidad + '/' + mala.op +
+            ' (' + err.message + '). Se apartó para que el resto siguiera enviándose.');
+          UI.toast('Una operación de ' + mala.entidad + ' no la acepta el servidor. Se apartó; el resto sigue sincronizando.','warn', 6000);
+          this._tam = this.LOTE_MAX;
+        } else {
+          this._tam = Math.max(1, Math.floor((this._tam || this.LOTE_MAX) / 4));
+        }
+      }
       DB.touch('queue');
       // Solo se avisa una vez por caída, para no tapar la pantalla en pleno servicio.
       if (this._fallos === 3) UI.toast('El servidor del local no responde. Sigue vendiendo: todo queda en cola.','warn', 5000);
@@ -2176,6 +2284,8 @@ const Sync = {
     }finally{
       this.running = false; UI.refreshStatus();
       if (State.view === 'sync') Router.render();
+      // Avisos que llegaron mientras tanto: se atienden ya.
+      if (this._pedido){ this._pedido = false; setTimeout(()=>this.run(true), 60); }
     }
   },
 
@@ -2235,8 +2345,9 @@ const Sync = {
   async publish(forzar){
     if (!this.activo()) return UI.toast('Primero escribe la dirección del servidor.','warn');
     const estado = {};
-    ['config','users','categories','products','meats','staff','clients','sales','orders','purchases','cash','meals']
-      .forEach(k => estado[k] = DB.d[k]);
+    ['config','users','categories','products','meats','staff','clients','sales','orders','purchases','cash','meals',
+     'gastos','domiciliarios','domTurnos']
+      .forEach(k => estado[k] = DB.d[k] || []);
     const res = await fetch(this.url('/sembrar'), {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({sede:DB.d.config.sedeId, estado, forzar: !!forzar})
@@ -2292,7 +2403,12 @@ const Sync = {
   /** Cuántos registros sincronizables tiene este equipo. Sirve de huella
       barata contra el `registros` que informa /salud. */
   contarLocal(){
-    return this.COLECCIONES.reduce((a, k) => a + ((DB.d[k]||[]).length), 0);
+    /* El "+1" es la configuración. El servidor guarda cada registro como una
+       fila de una sola tabla, y la configuración ocupa una fila más; /salud
+       informa el total de filas. Sin contarla aquí, la comparación daba un
+       registro de diferencia SIEMPRE, incluso con todo al día, y eso disparaba
+       una descarga completa de la base cada pocos minutos sin necesidad. */
+    return this.COLECCIONES.reduce((a, k) => a + ((DB.d[k]||[]).length), 0) + 1;
   },
 
   /** ¿Vale la pena conservar lo que hay en este equipo? Un aparato recién
@@ -2443,7 +2559,24 @@ const Sync = {
       // Lo que ya está esperando en la cola no se vuelve a encolar.
       const enCola = new Set();
       (DB.d.queue||[]).forEach(op => { if (op && op.payload && op.payload.id != null) enCola.add(op.entidad + '\u0000' + op.payload.id); });
+
+      /* Veredicto sobre lo enviado en la reconciliación anterior: si de una
+         colección no llegó ni un registro, el servidor no la guarda. Solo se
+         juzga lo que ya salió de la cola; lo que sigue esperando no prueba
+         nada. */
+      Object.keys(this._empujado).forEach(k => {
+        const ids = (this._empujado[k]||[]).filter(id => !enCola.has(k + '\u0000' + id));
+        if (!ids.length) return;
+        const alla = new Set((est[k]||[]).map(r => r && r.id));
+        if (!ids.some(id => alla.has(id))){
+          this.noGuarda[k] = true;
+          DB.log('sync:no-guarda', 'El servidor no conserva "' + k + '": se deja de enviar hasta que el servidor lo soporte.');
+        }
+      });
+      this._empujado = {};
+
       if (propios) this.COLECCIONES.forEach(k => {
+        if (this.noGuarda[k]) return;
         const remoto = new Map();
         (est[k]||[]).forEach(r => { if (r && r.id != null) remoto.set(r.id, r); });
         (DB.d[k]||[]).forEach(r => {
@@ -2453,6 +2586,8 @@ const Sync = {
           const s = remoto.get(r.id);
           if (!s) subir.push({entidad:k, op:'create', payload:r});
           else if ((r.act||'') > (s.act||'')) subir.push({entidad:k, op:'update', payload:r});
+          else return;
+          (this._empujado[k] = this._empujado[k] || []).push(r.id);
         });
       });
       resumen.enviados = this.encolarLote(subir);
@@ -4297,12 +4432,12 @@ Views.dash = {
       if (!d) return;
       if (d.enTurno){
         d.enTurno = false; d.finTurno = Util.now(); d.act = Util.now();
-        DB.touch('domiciliarios');
+        DB.touch('domiciliarios'); Sync.enqueue('domiciliarios','update', d);
         DB.log('domiciliario:fin-turno', d.nombre);
         UI.toast(d.nombre + ' finalizó turno.','ok');
       } else {
         d.enTurno = true; d.inicioTurno = Util.now(); d.finTurno = null; d.act = Util.now();
-        DB.touch('domiciliarios');
+        DB.touch('domiciliarios'); Sync.enqueue('domiciliarios','update', d);
         DB.log('domiciliario:inicio-turno', d.nombre);
         UI.toast(d.nombre + ' inició turno.','ok');
       }
@@ -4334,7 +4469,7 @@ Views.dash = {
           if (!d) return;
           if (!(await UI.confirm('¿Eliminar a ' + d.nombre + '?', {ok:'Eliminar', danger:true}))) return;
           d.borrado = true; d.activo = false; d.act = Util.now();
-          DB.touch('domiciliarios');
+          DB.touch('domiciliarios'); Sync.enqueue('domiciliarios','update', d);
           DB.log('domiciliario:eliminar', d.nombre);
           UI.toast('Domiciliario eliminado.','ok');
           UI.closeAll(); Router.render();
@@ -4356,7 +4491,7 @@ Views.dash = {
         const obj = Object.assign(d || {id:Util.uid('dm'), enTurno:false, inicioTurno:null, finTurno:null},
           data, {act:Util.now()});
         if (!d){ DB.d.domiciliarios.push(obj); }
-        DB.touch('domiciliarios');
+        DB.touch('domiciliarios'); Sync.enqueue('domiciliarios', d?'update':'create', obj);
         DB.log(d?'domiciliario:editar':'domiciliario:crear', obj.nombre);
         close(); UI.toast(d ? 'Domiciliario actualizado.' : 'Domiciliario creado.','ok');
         UI.closeAll(); Router.render();
@@ -5754,7 +5889,7 @@ const Domicilios = {
     const transferencia = (porMetodo['Transferencia']||0) + (porMetodo['Nequi']||0) + (porMetodo['Daviplata']||0);
     const total = ventas.reduce((a,s)=>a+(s.total||0), 0);
     const otros = Math.max(0, total - efectivo - transferencia);
-    const egresos = (DB.d.gastos||[]).filter(g => g.userId === t.userId &&
+    const egresos = (DB.d.gastos||[]).filter(g => !g.borrado && g.userId === t.userId &&
       g.fecha >= t.apertura && (!t.cierre || g.fecha <= t.cierre)).reduce((a,g)=>a+(Number(g.valor)||0), 0);
     return { ventas, cantidad: ventas.length, efectivo, transferencia, otros, total, ingresos: total, egresos };
   },
@@ -10009,11 +10144,11 @@ Views.gastos = {
     const turnoLabel = c
       ? 'Turno de ' + Util.esc((DB.user(c.userId)||{}).nombre||'—') + ' · abierto ' + Util.dt(c.apertura)
       : 'No hay turno abierto — abre la caja primero';
-    const gastosDelTurno = c ? DB.d.gastos.filter(g => g.fecha >= c.apertura && (!c.cierre || g.fecha <= c.cierre)) : [];
+    const gastosDelTurno = c ? DB.d.gastos.filter(g => !g.borrado && g.fecha >= c.apertura && (!c.cierre || g.fecha <= c.cierre)) : [];
     const totalEfectivo = gastosDelTurno.filter(g=>g.metodo==='Efectivo').reduce((a,g)=>a+g.valor,0);
     const totalTransf = gastosDelTurno.filter(g=>g.metodo==='Transferencia').reduce((a,g)=>a+g.valor,0);
     const totalGastos = totalEfectivo + totalTransf;
-    const allGastos = DB.d.gastos.slice(-50).reverse();
+    const allGastos = DB.d.gastos.filter(g => !g.borrado).slice(-50).reverse();
     return '<div class="view-head"><div><div class="eyebrow">' + turnoLabel + '</div><h2>Gastos</h2></div></div>' +
       '<div class="grid g-kpi" style="margin-bottom:14px">' +
         UI.kpi('Gastos del turno', Util.money(totalGastos), gastosDelTurno.length + ' registros') +
@@ -10070,6 +10205,7 @@ Views.gastos = {
           metodo:d.metodo, userId:(Auth.user||{}).id, cajaId:c.id, act:Util.now()};
         if (!DB.d.gastos) DB.d.gastos = [];
         DB.d.gastos.push(gasto);
+        Sync.enqueue('gastos','create', gasto);
         /* Registrar como egreso en caja si es efectivo */
         if (d.metodo === 'Efectivo'){
           c.movs.push({id:Util.uid('mv'), tipo:'egreso', fecha:Util.now(),
@@ -10094,7 +10230,13 @@ Views.gastos = {
       const c = DB.d.cash.find(x => x.id === g.cajaId);
       if (c){ c.movs = c.movs.filter(m => !(m.concepto === 'Gasto: ' + g.concepto && Math.abs(m.monto) === g.valor)); c.act = Util.now(); Sync.enqueue('cash','update', c); }
     }
-    DB.d.gastos = DB.d.gastos.filter(x => x.id !== gastoId);
+    /* Baja lógica, no borrado a secas. Ahora que los gastos viajan entre
+       equipos, quitarlo de la lista sin dejar marca haría que volviera con
+       la siguiente sincronización: el servidor todavía lo tendría y lo
+       daría por nuevo. La marca viaja y lo deja eliminado en todas partes.
+       Todas las listas y todos los totales ya descartan lo marcado. */
+    g.borrado = true; g.act = Util.now();
+    Sync.enqueue('gastos','update', g);
     DB.touch('cash'); DB.touch('gastos');
     DB.log('gasto:eliminar', g.concepto + ' · ' + Util.money(g.valor) + ' · autorizó ' + autorizo.nombre, gastoId);
     UI.toast('Gasto eliminado.','ok'); Router.render();
@@ -10130,7 +10272,7 @@ Views.cash = {
        sin importar la forma de pago — este es el valor que deben usar
        el resumen, el PDF y los reportes. */
     const gastosTotal = (DB.d.gastos||[])
-      .filter(g => g.fecha >= c.apertura && (!c.cierre || g.fecha <= c.cierre))
+      .filter(g => !g.borrado && g.fecha >= c.apertura && (!c.cierre || g.fecha <= c.cierre))
       .reduce((a,g)=>a+(Number(g.valor)||0), 0);
     return {ventas, porMetodo, efectivoVentas, transferencias, otrosMedios, ingresos, egresos, esperado, total, gastosTotal};
   },
@@ -10605,7 +10747,7 @@ const Reports = {
       {k:'fecha',t:'Fecha',f:'dt'},{k:'concepto',t:'Concepto'},{k:'metodo',t:'Forma de pago'},
       {k:'responsable',t:'Responsable'},{k:'valor',t:'Valor',n:1,f:'$'}],
       build(v, from, to){ return (DB.d.gastos||[])
-        .filter(g => g.fecha.slice(0,10) >= from && g.fecha.slice(0,10) <= to)
+        .filter(g => !g.borrado && g.fecha.slice(0,10) >= from && g.fecha.slice(0,10) <= to)
         .map(g => ({fecha:g.fecha, concepto:g.concepto, metodo:g.metodo||'Efectivo',
           responsable:(DB.user(g.userId)||{}).nombre || '—', valor:g.valor||0}))
         .sort((a,b) => a.fecha < b.fecha ? 1 : -1); }},
@@ -11124,6 +11266,23 @@ Views.sync = {
             'Los otros dos quedan como último recurso: <b>Publicar</b> impone la base de este equipo al servidor y ' +
             '<b>Traer</b> reemplaza la de este aparato por la del servidor.</p>' +
         '</div>' +
+        (Sync.rechazadas.length ?
+          '<div class="card" style="margin-bottom:14px;border-color:var(--ember-dim)">' +
+            '<div class="eyebrow" style="margin-bottom:9px">Operaciones apartadas</div>' +
+            '<p class="dim" style="font-size:11.5px;margin-bottom:9px">El servidor no las aceptó, así que se sacaron de la cola ' +
+              'para que el resto siguiera enviándose. La información sigue guardada en este equipo.</p>' +
+            UI.table([{t:'Momento'},{t:'Entidad'},{t:'Referencia'},{t:'Motivo'}],
+              Sync.rechazadas.slice(0,20).map(r => '<tr><td>' + Util.dt(r.ts) + '</td><td>' + Util.esc(r.entidad) + '</td>' +
+                '<td class="num" style="font-size:11px">' + Util.esc(r.ref) + '</td>' +
+                '<td class="dim">' + Util.esc(r.error) + '</td></tr>')) +
+          '</div>' : '') +
+        (Object.keys(Sync.noGuarda).length ?
+          '<div class="card" style="margin-bottom:14px">' +
+            '<div class="eyebrow" style="margin-bottom:8px">Solo en este equipo</div>' +
+            '<p style="font-size:13px;line-height:1.6">El servidor todavía no guarda <b>' +
+              Util.esc(Object.keys(Sync.noGuarda).join(', ')) + '</b>, así que eso no se comparte entre equipos. ' +
+              'Todo lo demás sí. Se vuelve a intentar solo cuando el servidor lo soporte.</p>' +
+          '</div>' : '') +
         '<div class="card pad0"><div class="card-h"><h3>Cola de operaciones</h3>' +
           (q.length ? '<button class="btn sm right" id="qclear" style="color:var(--ember-hi)">Descartar</button>' : '') + '</div>' +
           UI.table([{t:'Momento'},{t:'Entidad'},{t:'Operación'},{t:'Referencia'},{t:'Intentos',n:1}],
@@ -11639,7 +11798,9 @@ const Boot = {
     window.addEventListener('online', ()=>{ upd(true); Sync.escuchar(); });
     window.addEventListener('offline', ()=>upd(false));
     document.addEventListener('visibilitychange', ()=>{
-      if (document.hidden) return Sesion.guardarYa();
+      // Irse a segundo plano es el momento más probable de que el navegador
+      // descarte la página: se escribe a disco antes de nada.
+      if (document.hidden){ DB._flushYa(); return Sesion.guardarYa(); }
       if (!Auth.user) return;
       // Al volver de segundo plano el canal suele venir muerto: se rehace y,
       // además, se comprueba que no se haya perdido nada mientras tanto.
@@ -11647,14 +11808,14 @@ const Boot = {
       Sync.puestaAlDia();
     });
     // En móviles la página se descarta sin avisar: se guarda antes de perderla
-    window.addEventListener('pagehide', ()=>Sesion.guardarYa());
+    window.addEventListener('pagehide', ()=>{ DB._flushYa(); Sesion.guardarYa(); });
     window.addEventListener('pageshow', e => {
       if (!Auth.user) return;
       // e.persisted = la página vuelve congelada de la caché del navegador.
       if (e.persisted || !Sync.enVivo) Sync.escuchar();
       Sync.puestaAlDia();
     });
-    window.addEventListener('beforeunload', ()=>Sesion.guardarYa());
+    window.addEventListener('beforeunload', ()=>{ DB._flushYa(); Sesion.guardarYa(); });
     setInterval(()=>{ if (navigator.onLine && DB.d.config.autoSync && Sync.pending()) Sync.run(true); }, 60000);
   },
 
