@@ -6003,10 +6003,35 @@ Views.domicilios = {
              emptyMsg: filtroTActivo ? 'Prueba con otra fecha o encargada.' : 'El historial de turnos de domicilios aparecerá aquí.'}) +
     '</div>';
 
+    /* Quién está en turno, a la vista y editable desde aquí: es lo que
+       decide qué domiciliarios se pueden asignar al despachar. */
+    const domsAct = (DB.d.domiciliarios||[]).filter(d=>!d.borrado && d.activo);
+    const domsHTML = '<div class="card pad0" style="margin-bottom:14px">' +
+      '<div class="card-h" style="justify-content:space-between;flex-wrap:wrap;gap:8px">' +
+        '<h3>Domiciliarios en turno <span class="dim" style="font-weight:400;font-size:12px">· ' +
+          domsAct.filter(d=>d.enTurno).length + ' de ' + domsAct.length + ' disponibles</span></h3>' +
+        '<button class="btn sm" data-act="gestion-doms2">Gestionar domiciliarios</button>' +
+      '</div>' +
+      (domsAct.length ?
+        '<div class="tbl-wrap"><table><thead><tr><th>Nombre</th><th>Teléfono</th><th>Estado</th>' +
+        '<th>Inicio turno</th><th>Fin turno</th><th></th></tr></thead><tbody>' +
+        domsAct.map(d =>
+          '<tr><td><b>' + Util.esc(d.nombre) + '</b></td>' +
+          '<td class="num">' + Util.esc(d.telefono||'—') + '</td>' +
+          '<td><span class="badge ' + (d.enTurno?'ok':'mut') + '">' + (d.enTurno?'En turno':'Fuera') + '</span></td>' +
+          '<td>' + (d.inicioTurno ? Util.dt(d.inicioTurno) : '—') + '</td>' +
+          '<td>' + (d.finTurno ? Util.dt(d.finTurno) : '—') + '</td>' +
+          '<td class="n"><button class="btn sm ' + (d.enTurno?'ghost':'gold') + '" data-domturno="' + d.id + '">' +
+            (d.enTurno ? 'Finalizar' : 'Iniciar turno') + '</button></td></tr>').join('') +
+        '</tbody></table></div>'
+        : UI.empty('No hay domiciliarios','Pulsa "Gestionar domiciliarios" para crear el primero.')) +
+    '</div>';
+
     return '<div class="view-head"><div>' +
         '<div class="eyebrow">Pedidos a domicilio de hoy · ' + Util.today() + '</div>' +
         '<h2>Domicilios</h2></div></div>' +
       turnoHTML +
+      domsHTML +
       '<div class="grid g-kpi" style="margin-bottom:14px">' +
         UI.kpi('Pedidos hoy', String(lista.length), 'domicilios registrados') +
         UI.kpi('Cobrado hoy', Util.money(totalDia), lista.filter(s=>s.estado==='pagada').length + ' cobrados') +
@@ -6033,8 +6058,25 @@ Views.domicilios = {
   mount(){
     const b = document.querySelector('[data-act=nuevo]');
     if (b) b.onclick = () => Views.domicilios.abrirFormulario();
-    const bg = document.querySelector('[data-act="gestion-doms"]');
-    if (bg) bg.onclick = () => Views.domicilios.gestionDomiciliarios();
+    document.querySelectorAll('[data-act="gestion-doms"],[data-act="gestion-doms2"]')
+      .forEach(b => b.onclick = () => Views.domicilios.gestionDomiciliarios());
+    /* Iniciar / finalizar turno desde la propia tabla del módulo. */
+    document.querySelectorAll('[data-domturno]').forEach(b => b.onclick = () => {
+      const d = (DB.d.domiciliarios||[]).find(x=>x.id===b.dataset.domturno);
+      if (!d) return;
+      if (d.enTurno){
+        d.enTurno = false; d.finTurno = Util.now(); d.act = Util.now();
+        DB.touch('domiciliarios'); Sync.enqueue('domiciliarios','update', d);
+        DB.log('domiciliario:fin-turno', d.nombre);
+        UI.toast(d.nombre + ' finalizó turno.','ok');
+      } else {
+        d.enTurno = true; d.inicioTurno = Util.now(); d.finTurno = null; d.act = Util.now();
+        DB.touch('domiciliarios'); Sync.enqueue('domiciliarios','update', d);
+        DB.log('domiciliario:inicio-turno', d.nombre);
+        UI.toast(d.nombre + ' inició turno.','ok');
+      }
+      Router.render();
+    });
     document.querySelectorAll('[data-domver]').forEach(tr => {
       tr.onclick = () => {
         const s = (DB.d.sales||[]).find(x=>x.id===tr.dataset.domver);
@@ -6962,36 +7004,87 @@ Views.domicilios = {
   /* Ver / reimprimir un domicilio existente */
   verTicket(venta){ Views.domicilios.imprimirTicket(venta); },
 
-  /** Gestión de domiciliarios: crear, editar, desactivar */
+  /** Gestión de domiciliarios: crear, editar, desactivar y abrir/cerrar
+      turno. El turno es lo que decide quién aparece para elegir al
+      despachar un domicilio, así que se maneja aquí mismo, en la misma
+      tabla, sin tener que salir a otra pantalla. */
   gestionDomiciliarios(){
     if (!DB.d.domiciliarios) DB.d.domiciliarios = [];
-    const doms = DB.d.domiciliarios.filter(d=>!d.borrado);
-    const rows = doms.map(d =>
-      '<tr><td><b>' + Util.esc(d.nombre) + '</b></td>' +
-      '<td>' + Util.esc(d.telefono||'—') + '</td>' +
-      '<td><span class="badge ' + (d.activo?'ok':'bad') + '">' + (d.activo?'Activo':'Inactivo') + '</span></td>' +
-      '<td class="n"><button class="btn sm ghost" data-dedit="' + d.id + '">Editar</button>' +
-        '<button class="btn sm ghost" data-ddel="' + d.id + '" style="color:var(--ash-dim)">Eliminar</button></td></tr>').join('');
+
+    const filas = () => {
+      const doms = DB.d.domiciliarios.filter(d=>!d.borrado);
+      if (!doms.length) return '<tr><td colspan="5" class="dim" style="text-align:center;padding:20px">' +
+        'No hay domiciliarios registrados</td></tr>';
+      return doms.map(d =>
+        '<tr><td><b>' + Util.esc(d.nombre) + '</b>' +
+          (d.enTurno && d.inicioTurno ? '<div class="dim" style="font-size:11px">desde ' +
+            Util.esc(Util.dt(d.inicioTurno)) + '</div>' : '') + '</td>' +
+        '<td>' + Util.esc(d.telefono||'—') + '</td>' +
+        '<td><span class="badge ' + (d.activo?'ok':'bad') + '">' + (d.activo?'Activo':'Inactivo') + '</span></td>' +
+        '<td>' + (!d.activo
+            ? '<span class="dim" style="font-size:12px">—</span>'
+            : '<span class="badge ' + (d.enTurno?'ok':'mut') + '">' + (d.enTurno?'En turno':'Fuera') + '</span>') + '</td>' +
+        '<td class="n" style="white-space:nowrap">' +
+          (d.activo ? '<button class="btn sm ' + (d.enTurno?'ghost':'gold') + '" data-dturno="' + d.id + '">' +
+            (d.enTurno ? 'Finalizar turno' : 'Iniciar turno') + '</button> ' : '') +
+          '<button class="btn sm ghost" data-dedit="' + d.id + '">Editar</button>' +
+          '<button class="btn sm ghost" data-ddel="' + d.id + '" style="color:var(--ash-dim)">Eliminar</button></td></tr>').join('');
+    };
+
+    const enTurno = () => DB.d.domiciliarios.filter(d=>!d.borrado && d.activo && d.enTurno).length;
+    const resumen = () => enTurno()
+      ? enTurno() + ' domiciliario(s) en turno. Solo ellos aparecen para asignar al despachar un domicilio.'
+      : 'Nadie está en turno. Inicia el turno de al menos uno para poder asignarlo al despachar un domicilio.';
 
     UI.modal({title:'Gestionar domiciliarios', size:'lg',
-      body:'<div class="tbl-wrap"><table><thead><tr><th>Nombre</th><th>Teléfono</th><th>Estado</th><th></th></tr></thead><tbody>' +
-        (rows || '<tr><td colspan="4" class="dim" style="text-align:center;padding:20px">No hay domiciliarios registrados</td></tr>') +
-        '</tbody></table></div>',
+      body:'<div id="dg-aviso" style="margin-bottom:12px;padding:10px 12px;border-radius:var(--r);' +
+          'background:rgba(212,175,95,.10);border:1px solid var(--line);font-size:12.5px;line-height:1.5">' +
+          Util.esc(resumen()) + '</div>' +
+        '<div class="tbl-wrap"><table><thead><tr><th>Nombre</th><th>Teléfono</th><th>Estado</th>' +
+        '<th>Turno</th><th></th></tr></thead><tbody id="dg-body">' + filas() + '</tbody></table></div>',
       footer:'<button class="btn" data-close>Cerrar</button>' +
              '<button class="btn pri" id="domNuevo">' + Util.ico('plus') + ' Nuevo domiciliario</button>',
       onMount(ov){
+        /* Se repinta solo la tabla: así el modal no se cierra ni salta
+           al iniciar o finalizar un turno. */
+        const pintar = () => {
+          ov.querySelector('#dg-body').innerHTML = filas();
+          ov.querySelector('#dg-aviso').textContent = resumen();
+          enlazar();
+        };
+        const enlazar = () => {
+          ov.querySelectorAll('[data-dturno]').forEach(b => b.onclick = () => {
+            const d = DB.d.domiciliarios.find(x=>x.id===b.dataset.dturno);
+            if (!d) return;
+            if (d.enTurno){
+              d.enTurno = false; d.finTurno = Util.now(); d.act = Util.now();
+              DB.touch('domiciliarios'); Sync.enqueue('domiciliarios','update', d);
+              DB.log('domiciliario:fin-turno', d.nombre);
+              UI.toast(d.nombre + ' finalizó turno.','ok');
+            } else {
+              d.enTurno = true; d.inicioTurno = Util.now(); d.finTurno = null; d.act = Util.now();
+              DB.touch('domiciliarios'); Sync.enqueue('domiciliarios','update', d);
+              DB.log('domiciliario:inicio-turno', d.nombre);
+              UI.toast(d.nombre + ' inició turno.','ok');
+            }
+            pintar();
+            Router.render();
+          });
+          ov.querySelectorAll('[data-dedit]').forEach(b => b.onclick = () => Views.domicilios.formDomiciliario(b.dataset.dedit));
+          ov.querySelectorAll('[data-ddel]').forEach(b => b.onclick = async () => {
+            const d = DB.d.domiciliarios.find(x=>x.id===b.dataset.ddel);
+            if (!d) return;
+            if (!(await UI.confirm('¿Eliminar a ' + d.nombre + '?', {ok:'Eliminar', danger:true}))) return;
+            d.borrado = true; d.activo = false; d.enTurno = false; d.act = Util.now();
+            DB.touch('domiciliarios'); Sync.enqueue('domiciliarios','update', d);
+            DB.log('domiciliario:eliminar', d.nombre);
+            UI.toast('Domiciliario eliminado.','ok');
+            pintar();
+            Router.render();
+          });
+        };
         ov.querySelector('#domNuevo').onclick = () => Views.domicilios.formDomiciliario();
-        ov.querySelectorAll('[data-dedit]').forEach(b => b.onclick = () => Views.domicilios.formDomiciliario(b.dataset.dedit));
-        ov.querySelectorAll('[data-ddel]').forEach(b => b.onclick = async () => {
-          const d = DB.d.domiciliarios.find(x=>x.id===b.dataset.ddel);
-          if (!d) return;
-          if (!(await UI.confirm('¿Eliminar a ' + d.nombre + '?', {ok:'Eliminar', danger:true}))) return;
-          d.borrado = true; d.activo = false; d.act = Util.now();
-          DB.touch('domiciliarios'); Sync.enqueue('domiciliarios','update', d);
-          DB.log('domiciliario:eliminar', d.nombre);
-          UI.toast('Domiciliario eliminado.','ok');
-          UI.closeAll(); Router.render();
-        });
+        enlazar();
       }
     });
   },
@@ -7012,7 +7105,10 @@ Views.domicilios = {
         DB.touch('domiciliarios'); Sync.enqueue('domiciliarios', d?'update':'create', obj);
         DB.log(d?'domiciliario:editar':'domiciliario:crear', obj.nombre);
         close(); UI.toast(d ? 'Domiciliario actualizado.' : 'Domiciliario creado.','ok');
+        /* Se vuelve a la lista de gestión con el dato ya fresco, para
+           poder iniciarle el turno enseguida al recién creado. */
         UI.closeAll(); Router.render();
+        setTimeout(()=>Views.domicilios.gestionDomiciliarios(), 140);
       }
     });
   }
