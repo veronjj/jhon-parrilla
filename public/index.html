@@ -529,6 +529,13 @@ td.n,th.n{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-
 
 /* ── Bandejas ────────────────────────────────────────────────────────── */
 .bandeja-carnes{display:grid;grid-template-columns:repeat(auto-fill,minmax(124px,1fr));gap:9px}
+/* Cuando la lista de insumos es larga, las tarjetas se aprietan un poco y la
+   rejilla lleva su propio scroll: así el campo de observación y los botones
+   del modal nunca quedan fuera de alcance. */
+.bandeja-carnes.compacta{grid-template-columns:repeat(auto-fill,minmax(106px,1fr));gap:8px;
+  max-height:44vh;overflow-y:auto;padding-right:4px}
+.bandeja-carnes.compacta .bcarne{padding:10px 6px}
+.bandeja-carnes.compacta .bcarne .ic{width:36px;height:36px}
 .bcarne{display:flex;flex-direction:column;align-items:center;gap:5px;padding:13px 8px;border-radius:var(--r);
   background:var(--char-750);border:1px solid var(--line);transition:.14s var(--ease);text-align:center}
 .bcarne:hover{border-color:var(--brass-dim);background:var(--char-700)}
@@ -9444,17 +9451,50 @@ Views.buy = {
 Views.comidas = {
   filtros(){ return State.filters.comidas || (State.filters.comidas = {fecha:Util.today(), q:''}); },
 
-  /** Las carnes que la casa autoriza para el personal, ya emparejadas con el inventario. */
+  /** Busca un insumo del inventario por nombre, con tolerancia: primero
+      exacto, luego sin plural, luego por coincidencia parcial. No filtra
+      por tipo, porque un insumo migrado de una versión anterior pudo
+      quedar marcado como 'bebida' solo por venderse por unidad, y aun así
+      es comida del personal perfectamente válida. */
+  buscarInsumo(nombre){
+    const q = Util.norm(nombre||'').trim();
+    if (!q) return null;
+    const todos = DB.meats();
+    const sinPlural = t => t.replace(/e?s$/,'');
+    return todos.find(m => Util.norm(m.nombre) === q)
+        || todos.find(m => sinPlural(Util.norm(m.nombre)) === sinPlural(q))
+        || todos.find(m => Util.norm(m.nombre).includes(q) || q.includes(Util.norm(m.nombre)))
+        || null;
+  },
+
+  /** Las carnes que la casa autoriza para el personal, ya emparejadas con
+      el inventario. La fuente de verdad son los insumos elegidos por id
+      (config.carnesEmpleadosIds); la lista de texto de siempre se sigue
+      leyendo para no perder nada de lo ya configurado, y para dejar
+      anotadas las que todavía no existen en el inventario. */
   autorizadas(){
-    const nombres = String(DB.d.config.carnesEmpleados||'').split(',')
-      .map(x => x.trim()).filter(Boolean);
-    return nombres.map(n => {
-      const m = DB.meats().find(x => (x.tipo||'carne') === 'carne' &&
-        Util.norm(x.nombre) === Util.norm(n));
-      return {nombre:n, insumo:m || null};
+    const ids = Array.isArray(DB.d.config.carnesEmpleadosIds) ? DB.d.config.carnesEmpleadosIds : null;
+    const out = [], vistos = new Set(), vistosNombre = new Set();
+
+    if (ids) ids.forEach(id => {
+      const m = DB.meats().find(x => x.id === id);
+      if (m && !vistos.has(m.id)){ vistos.add(m.id); out.push({nombre:m.nombre, insumo:m}); }
     });
+
+    String(DB.d.config.carnesEmpleados||'').split(',').map(x=>x.trim()).filter(Boolean).forEach(n => {
+      const m = this.buscarInsumo(n);
+      if (m){
+        if (!vistos.has(m.id)){ vistos.add(m.id); out.push({nombre:m.nombre, insumo:m}); }
+      } else {
+        const k = Util.norm(n);
+        if (!vistosNombre.has(k)){ vistosNombre.add(k); out.push({nombre:n, insumo:null}); }
+      }
+    });
+    return out;
   },
   faltantes(){ return this.autorizadas().filter(x => !x.insumo); },
+  /** Autorizadas que sí existen pero están en cero: no se pueden servir. */
+  agotadas(){ return this.autorizadas().filter(x => x.insumo && DB.available(x.insumo.id) < 1); },
 
   actions(){
     return '<button class="btn" data-act="personal">' + Util.ico('team') + '<span>Empleados</span></button>' +
@@ -9637,9 +9677,17 @@ Views.comidas = {
     const activos = DB.personal();
     if (!activos.length)
       return UI.toast('No hay personal activo. Agrégalo en el botón Empleados.','warn', 5200);
-    const disponibles = this.autorizadas().filter(x => x.insumo);
+    const todas = this.autorizadas();
+    const disponibles = todas.filter(x => x.insumo);
     if (!disponibles.length)
-      return UI.toast('Ninguna de las carnes autorizadas está en el inventario. Créalas primero.','warn', 5200);
+      return UI.toast('Ninguna de las carnes autorizadas está en el inventario. ' +
+        'Ábrelas en "Carnes autorizadas" y elígelas del inventario.','warn', 6000);
+    const sinInv = todas.filter(x => !x.insumo).map(x => x.nombre);
+    const enCero = disponibles.filter(x => DB.available(x.insumo.id) < 1).map(x => x.insumo.nombre);
+    const avisoFalta = [
+      enCero.length ? 'Sin existencia: ' + Util.esc(enCero.join(', ')) + '.' : '',
+      sinInv.length ? 'Autorizadas que no están en el inventario: ' + Util.esc(sinInv.join(', ')) + '.' : ''
+    ].filter(Boolean).join(' ');
 
     let sel = userId || null;
     let carne = null;
@@ -9671,17 +9719,23 @@ Views.comidas = {
                 '<div><b style="font-size:13.5px">Ya comió hoy</b><div class="dim" style="font-size:12px">' +
                 Util.esc(yaComio.carneNombre) + ' a las ' + Util.time(yaComio.fecha) +
                 '. Podrá volver a registrarse mañana.</div></div></div></div>'
-              : '<div class="eyebrow" style="margin:14px 0 8px">¿Qué carne?</div>' +
-                '<div class="bandeja-carnes">' + disponibles.map(x => {
+              : '<div class="eyebrow" style="margin:14px 0 8px">¿Qué carne? <span class="dim" ' +
+                  'style="text-transform:none;letter-spacing:0">· ' + disponibles.length + ' autorizada(s)</span></div>' +
+                '<div class="bandeja-carnes' + (disponibles.length > 8 ? ' compacta' : '') + '">' + disponibles.map(x => {
                   const disp = DB.available(x.insumo.id);
                   const falta = disp < 1;
                   return '<button class="bcarne ' + (falta?'off':'') + (carne===x.insumo.id?' on':'') +
                     '" data-c="' + x.insumo.id + '"' + (falta?' disabled':'') + '>' +
-                    '<span class="ic"><span class="g-carne">' + Glifo.svg('corte', 26) + '</span></span>' +
+                    '<span class="ic">' + Glifo.de(x.insumo, 26) + '</span>' +
                     '<b>' + Util.esc(x.insumo.nombre) + '</b>' +
                     '<span class="dim">' + (falta ? 'agotada' : Util.cantIns(Math.max(0,disp), x.insumo)) + '</span>' +
                   '</button>';
                 }).join('') + '</div>' +
+                /* Si una carne autorizada no se puede servir, se dice por qué:
+                   antes simplemente no aparecía y no había forma de saberlo. */
+                (avisoFalta ? '<div style="margin-top:10px;padding:9px 12px;border-radius:var(--r);' +
+                  'background:rgba(163,35,28,.10);border:1px solid rgba(163,35,28,.30);' +
+                  'font-size:11.5px;line-height:1.5;color:var(--ash)">' + avisoFalta + '</div>' : '') +
                 /* Selector de cantidad para Huevos (máx 2 porciones) */
                 '<div id="cmHuevosQty" class="hide" style="margin-top:10px;padding:10px 14px;border-radius:8px;background:rgba(198,168,103,.08)">' +
                   '<div class="row" style="gap:10px;align-items:center">' +
@@ -10083,26 +10137,98 @@ Views.comidas = {
     if (despues) despues(); else Router.render();
   },
 
-  /** Qué carnes puede consumir el personal. */
+  /** Qué carnes puede consumir el personal. Se eligen del inventario con
+      un toque, en vez de escribirlas: escribiéndolas bastaba una tilde,
+      un plural o un espacio de más para que la carne no apareciera al
+      registrar, y el error no se veía por ninguna parte. */
   configurar(){
-    UI.formModal({
-      title:'Carnes autorizadas para el personal', size:'lg', ok:'Guardar',
-      extra:'<p class="dim" style="font-size:11.5px;margin-top:8px">Cada nombre debe coincidir con una carne del ' +
-        'inventario para poder descontarla. Las que falten se pueden crear desde el aviso del módulo.</p>',
-      fields:[
-        {k:'carnesEmpleados', label:'Carnes, separadas por coma', type:'textarea',
-         val:DB.d.config.carnesEmpleados, full:true,
-         ph:'Sobre barriga, Posta, Chuleta, Hígado, Cerdo, Chicharrón, Desmechada, Chorizo'},
-        {k:'alimentacionUnaVez', label:'Un solo plato por persona al día', type:'check',
-         val:DB.d.config.alimentacionUnaVez !== false, full:true}
-      ],
-      onSave(d, close){
-        DB.d.config.carnesEmpleados = d.carnesEmpleados;
-        DB.d.config.alimentacionUnaVez = d.alimentacionUnaVez;
-        DB.touch('config');
-        Sync.enqueue('config','update', Object.assign({id:'config', act:Util.now()}, DB.d.config));
-        DB.log('alimentacion:configurar', d.carnesEmpleados);
-        close(); UI.toast('Carnes autorizadas guardadas.','ok'); Router.render();
+    const todos = DB.meats().slice().sort((a,b)=>a.nombre.localeCompare(b.nombre,'es'));
+    const actuales = this.autorizadas();
+    const sel = new Set(actuales.filter(x=>x.insumo).map(x=>x.insumo.id));
+    /* Nombres autorizados que todavía no existen en el inventario: se
+       conservan tal cual, para poder crearlos desde el aviso del módulo. */
+    let pendientes = actuales.filter(x=>!x.insumo).map(x=>x.nombre);
+    let q = '';
+    const self = this;
+
+    UI.modal({
+      title:'Carnes autorizadas para el personal', size:'lg',
+      body:'<div id="caBody"></div>',
+      footer:'<button class="btn" data-close>Cancelar</button>' +
+             '<button class="btn pri" id="caOk">Guardar</button>',
+      onMount(ov){
+        const box = ov.querySelector('#caBody');
+        const pinta = () => {
+          const nq = Util.norm(q).trim();
+          const lista = todos.filter(m => !nq || Util.norm(m.nombre).includes(nq));
+          box.innerHTML =
+            '<p class="dim" style="font-size:12px;line-height:1.55;margin:0">' +
+              'Marca lo que el personal puede pedir. Solo lo marcado aparece al registrar una comida, ' +
+              'y se descuenta de ese mismo insumo del inventario.</p>' +
+            '<div class="row wrap" style="gap:8px">' +
+              '<div class="search" style="flex:1;min-width:200px">' + Util.ico('search') +
+                '<input class="inp" id="caQ" autocomplete="off" placeholder="Buscar insumo" value="' + Util.esc(q) + '"></div>' +
+              '<span class="badge ' + (sel.size?'ok':'warn') + '">' + sel.size + ' seleccionada(s)</span>' +
+              '<button class="btn sm ghost" id="caNone">Quitar todas</button>' +
+            '</div>' +
+            (lista.length
+              ? '<div class="bandeja-carnes" id="caGrid">' + lista.map(m => {
+                  const disp = DB.available(m.id);
+                  return '<button class="bcarne' + (sel.has(m.id)?' on':'') + '" data-ca="' + m.id + '">' +
+                    '<span class="ic">' + Glifo.de(m, 26) + '</span>' +
+                    '<b>' + Util.esc(m.nombre) + '</b>' +
+                    '<span class="dim">' + Util.cantIns(Math.max(0,disp), m) + '</span>' +
+                  '</button>';
+                }).join('') + '</div>'
+              : '<div class="card">' + UI.empty('Ningún insumo coincide','Prueba con otro nombre.') + '</div>') +
+            (pendientes.length
+              ? '<div style="padding:10px 12px;border-radius:var(--r);background:rgba(163,35,28,.10);' +
+                'border:1px solid rgba(163,35,28,.35)">' +
+                '<div style="font-size:12.5px;font-weight:700;color:var(--ember-hi)">Autorizadas que no están en el inventario</div>' +
+                '<div class="dim" style="font-size:11.5px;margin-top:4px;line-height:1.5">' +
+                  Util.esc(pendientes.join(', ')) + '. Créalas desde el aviso del módulo o quítalas de la lista.</div>' +
+                '<button class="btn sm ghost" id="caPend" style="margin-top:8px">Quitar de la lista</button></div>'
+              : '') +
+            '<label class="f" style="margin:0">' +
+              '<span class="row" style="gap:8px"><input type="checkbox" id="caUnaVez"' +
+                (DB.d.config.alimentacionUnaVez !== false ? ' checked' : '') + '>' +
+                '<span style="font-size:13px">Un solo plato por persona al día</span></span></label>';
+
+          const iq = box.querySelector('#caQ');
+          if (iq){
+            iq.oninput = () => { q = iq.value; pinta(); };
+            if (q){ iq.focus(); iq.setSelectionRange(iq.value.length, iq.value.length); }
+          }
+          box.querySelectorAll('[data-ca]').forEach(b => b.onclick = () => {
+            const id = b.dataset.ca;
+            if (sel.has(id)) sel.delete(id); else sel.add(id);
+            b.classList.toggle('on', sel.has(id));
+            const cnt = box.querySelector('.badge');
+            if (cnt){ cnt.textContent = sel.size + ' seleccionada(s)';
+              cnt.className = 'badge ' + (sel.size?'ok':'warn'); }
+          });
+          const bn = box.querySelector('#caNone');
+          if (bn) bn.onclick = () => { sel.clear(); pinta(); };
+          const bp = box.querySelector('#caPend');
+          if (bp) bp.onclick = () => { pendientes = []; pinta(); };
+        };
+        pinta();
+
+        ov.querySelector('#caOk').onclick = () => {
+          if (!sel.size && !pendientes.length)
+            return UI.toast('Marca al menos un insumo para el personal.','warn');
+          const ids = todos.filter(m => sel.has(m.id)).map(m => m.id);
+          const nombres = todos.filter(m => sel.has(m.id)).map(m => m.nombre).concat(pendientes);
+          DB.d.config.carnesEmpleadosIds = ids;
+          DB.d.config.carnesEmpleados = nombres.join(', ');
+          DB.d.config.alimentacionUnaVez = !!(box.querySelector('#caUnaVez')||{}).checked;
+          DB.touch('config');
+          Sync.enqueue('config','update', Object.assign({id:'config', act:Util.now()}, DB.d.config));
+          DB.log('alimentacion:configurar', nombres.join(', '));
+          UI.closeAll();
+          UI.toast(ids.length + ' carne(s) autorizadas guardadas.','ok');
+          Router.render();
+        };
       }
     });
   },
@@ -10114,13 +10240,21 @@ Views.comidas = {
     if (!(await UI.confirm('Se crearán ' + faltan.length + ' carne(s) en el inventario, en cero porciones: ' +
       faltan.map(x=>x.nombre).join(', ') + '. Después registra las existencias con una compra o un conteo.',
       {ok:'Crear'}))) return;
+    const nuevos = [];
     faltan.forEach(x => {
       const m = {id:Util.uid('m'), nombre:x.nombre, presentacion:'', tipo:'carne', unidad:'und',
         gramos:0, minimo:0, costoGramo:0, unidadMigrada:true, act:Util.now()};
       DB.d.meats.push(m);
+      nuevos.push(m.id);
       Sync.enqueue('meats','create', m);
     });
     DB.touch('meats');
+    /* Recién creadas quedan autorizadas de una vez, enlazadas por id: así
+       no dependen otra vez de que el nombre escrito calce exacto. */
+    const ids = Array.isArray(DB.d.config.carnesEmpleadosIds) ? DB.d.config.carnesEmpleadosIds.slice() : [];
+    DB.d.config.carnesEmpleadosIds = ids.concat(nuevos.filter(id => !ids.includes(id)));
+    DB.touch('config');
+    Sync.enqueue('config','update', Object.assign({id:'config', act:Util.now()}, DB.d.config));
     DB.log('alimentacion:crear-carnes', faltan.map(x=>x.nombre).join(', '));
     UI.toast(faltan.length + ' carnes creadas en cero. Regístralas con una compra.','ok', 5200);
     Router.render();
