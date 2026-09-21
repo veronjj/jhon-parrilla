@@ -4311,7 +4311,6 @@ Views.dash = {
     const maxTop = Math.max(1, ...top.map(t=>t.qty));
     const pagos = Object.entries(Metrics.byPayment(vHoy)).sort((a,b)=>b[1]-a[1]);
     const ultimas = DB.paid().slice(-8).reverse();
-    const frec = DB.clients().filter(c=>!c.sistema).sort((a,b)=>b.gastado-a.gastado).slice(0,5);
     const caja = DB.openCash();
 
     return '' +
@@ -4370,12 +4369,6 @@ Views.dash = {
             '<td class="n">' + Util.money(s.total) + '</td></tr>'),
           {emptyTitle:'Sin ventas registradas', emptyMsg:'Abre la caja y registra la primera venta del día.'}) +
       '</div>' +
-      '<div class="card pad0"><div class="card-h"><h3>Clientes frecuentes</h3></div>' +
-        UI.table([{t:'Cliente'},{t:'Visitas',n:1},{t:'Gastado',n:1}],
-          frec.map(c => '<tr><td>' + Util.esc(c.nombre) + '</td><td class="n">' + c.visitas + '</td>' +
-            '<td class="n">' + Util.money(c.gastado) + '</td></tr>'),
-          {emptyTitle:'Todavía no hay clientes con historial', emptyMsg:'Asocia un cliente al cobrar para construir su historial.'}) +
-      '</div>' +
     '</div>' +
 
     /* ── Reporte de Domicilios ── */
@@ -4399,7 +4392,7 @@ Views.dash = {
       });
 
       return '<div class="card pad0" style="margin-top:14px"><div class="card-h"><h3>Reporte de Domicilios</h3>' +
-        '<button class="btn sm right" data-act="gestionar-doms">Gestionar domiciliarios</button></div>' +
+        '<button class="btn sm right" data-act="ir-dom">Ir a Domicilios</button></div>' +
         '<div class="grid g-kpi" style="padding:14px 16px">' +
           UI.kpi('Domicilios hoy', String(domHoy.length), Util.money(totalDomHoy) + ' facturado') +
           UI.kpi('Cargo domicilios', Util.money(cargoDomHoy), 'Cobrado por el servicio') +
@@ -4436,7 +4429,7 @@ Views.dash = {
       if (a === 'ir-pos') Router.go('pos');
       if (a === 'ir-inv') Router.go('inv');
       if (a === 'ir-rep') Router.go('reports');
-      if (a === 'gestionar-doms') Views.dash.gestionDomiciliarios();
+      if (a === 'ir-dom') Router.go('domicilios');
     });
     document.querySelectorAll('[data-sale]').forEach(tr => tr.onclick = () => Ticket.open(tr.dataset.sale));
     /* Botones turno domiciliario */
@@ -4455,60 +4448,6 @@ Views.dash = {
         UI.toast(d.nombre + ' inició turno.','ok');
       }
       Router.render();
-    });
-  },
-  /** Gestión de domiciliarios: crear, editar, desactivar */
-  gestionDomiciliarios(){
-    if (!DB.d.domiciliarios) DB.d.domiciliarios = [];
-    const doms = DB.d.domiciliarios.filter(d=>!d.borrado);
-    const rows = doms.map(d =>
-      '<tr><td><b>' + Util.esc(d.nombre) + '</b></td>' +
-      '<td>' + Util.esc(d.telefono||'—') + '</td>' +
-      '<td><span class="badge ' + (d.activo?'ok':'bad') + '">' + (d.activo?'Activo':'Inactivo') + '</span></td>' +
-      '<td class="n"><button class="btn sm ghost" data-dedit="' + d.id + '">Editar</button>' +
-        '<button class="btn sm ghost" data-ddel="' + d.id + '" style="color:var(--ash-dim)">Eliminar</button></td></tr>').join('');
-
-    UI.modal({title:'Gestionar domiciliarios', size:'lg',
-      body:'<div class="tbl-wrap"><table><thead><tr><th>Nombre</th><th>Teléfono</th><th>Estado</th><th></th></tr></thead><tbody>' +
-        (rows || '<tr><td colspan="4" class="dim" style="text-align:center;padding:20px">No hay domiciliarios registrados</td></tr>') +
-        '</tbody></table></div>',
-      footer:'<button class="btn" data-close>Cerrar</button>' +
-             '<button class="btn pri" id="domNuevo">' + Util.ico('plus') + ' Nuevo domiciliario</button>',
-      onMount(ov){
-        ov.querySelector('#domNuevo').onclick = () => Views.dash.formDomiciliario();
-        ov.querySelectorAll('[data-dedit]').forEach(b => b.onclick = () => Views.dash.formDomiciliario(b.dataset.dedit));
-        ov.querySelectorAll('[data-ddel]').forEach(b => b.onclick = async () => {
-          const d = DB.d.domiciliarios.find(x=>x.id===b.dataset.ddel);
-          if (!d) return;
-          if (!(await UI.confirm('¿Eliminar a ' + d.nombre + '?', {ok:'Eliminar', danger:true}))) return;
-          d.borrado = true; d.activo = false; d.act = Util.now();
-          DB.touch('domiciliarios'); Sync.enqueue('domiciliarios','update', d);
-          DB.log('domiciliario:eliminar', d.nombre);
-          UI.toast('Domiciliario eliminado.','ok');
-          UI.closeAll(); Router.render();
-        });
-      }
-    });
-  },
-  formDomiciliario(id){
-    const d = id ? (DB.d.domiciliarios||[]).find(x=>x.id===id) : null;
-    UI.formModal({title: d ? 'Editar domiciliario' : 'Nuevo domiciliario', size:'sm',
-      ok: d ? 'Guardar' : 'Crear domiciliario',
-      fields:[
-        {k:'nombre', label:'Nombre completo', val:d?d.nombre:'', req:true, full:true},
-        {k:'telefono', label:'Teléfono', val:d?d.telefono:'', full:true},
-        {k:'activo', label:'Activo', type:'check', val:d?d.activo:true, full:true}
-      ],
-      onSave(data, close){
-        if (!data.nombre.trim()) return 'El nombre es obligatorio.';
-        const obj = Object.assign(d || {id:Util.uid('dm'), enTurno:false, inicioTurno:null, finTurno:null},
-          data, {act:Util.now()});
-        if (!d){ DB.d.domiciliarios.push(obj); }
-        DB.touch('domiciliarios'); Sync.enqueue('domiciliarios', d?'update':'create', obj);
-        DB.log(d?'domiciliario:editar':'domiciliario:crear', obj.nombre);
-        close(); UI.toast(d ? 'Domiciliario actualizado.' : 'Domiciliario creado.','ok');
-        UI.closeAll(); Router.render();
-      }
     });
   }
 };
@@ -5952,7 +5891,10 @@ const Domicilios = {
 
 Views.domicilios = {
   actions(){
-    return '<button class="btn pri" data-act="nuevo">' + Util.ico('plus') + '<span>Nuevo domicilio</span></button>';
+    /* "Gestionar domiciliarios" vive aquí, en su módulo, y no en el
+       Tablero: quien despacha es quien da de alta o saca de turno. */
+    return '<button class="btn" data-act="gestion-doms">' + Util.ico('moto') + '<span>Gestionar domiciliarios</span></button>' +
+           '<button class="btn pri" data-act="nuevo">' + Util.ico('plus') + '<span>Nuevo domicilio</span></button>';
   },
 
   html(){
@@ -6091,6 +6033,8 @@ Views.domicilios = {
   mount(){
     const b = document.querySelector('[data-act=nuevo]');
     if (b) b.onclick = () => Views.domicilios.abrirFormulario();
+    const bg = document.querySelector('[data-act="gestion-doms"]');
+    if (bg) bg.onclick = () => Views.domicilios.gestionDomiciliarios();
     document.querySelectorAll('[data-domver]').forEach(tr => {
       tr.onclick = () => {
         const s = (DB.d.sales||[]).find(x=>x.id===tr.dataset.domver);
@@ -7016,7 +6960,62 @@ Views.domicilios = {
   },
 
   /* Ver / reimprimir un domicilio existente */
-  verTicket(venta){ Views.domicilios.imprimirTicket(venta); }
+  verTicket(venta){ Views.domicilios.imprimirTicket(venta); },
+
+  /** Gestión de domiciliarios: crear, editar, desactivar */
+  gestionDomiciliarios(){
+    if (!DB.d.domiciliarios) DB.d.domiciliarios = [];
+    const doms = DB.d.domiciliarios.filter(d=>!d.borrado);
+    const rows = doms.map(d =>
+      '<tr><td><b>' + Util.esc(d.nombre) + '</b></td>' +
+      '<td>' + Util.esc(d.telefono||'—') + '</td>' +
+      '<td><span class="badge ' + (d.activo?'ok':'bad') + '">' + (d.activo?'Activo':'Inactivo') + '</span></td>' +
+      '<td class="n"><button class="btn sm ghost" data-dedit="' + d.id + '">Editar</button>' +
+        '<button class="btn sm ghost" data-ddel="' + d.id + '" style="color:var(--ash-dim)">Eliminar</button></td></tr>').join('');
+
+    UI.modal({title:'Gestionar domiciliarios', size:'lg',
+      body:'<div class="tbl-wrap"><table><thead><tr><th>Nombre</th><th>Teléfono</th><th>Estado</th><th></th></tr></thead><tbody>' +
+        (rows || '<tr><td colspan="4" class="dim" style="text-align:center;padding:20px">No hay domiciliarios registrados</td></tr>') +
+        '</tbody></table></div>',
+      footer:'<button class="btn" data-close>Cerrar</button>' +
+             '<button class="btn pri" id="domNuevo">' + Util.ico('plus') + ' Nuevo domiciliario</button>',
+      onMount(ov){
+        ov.querySelector('#domNuevo').onclick = () => Views.domicilios.formDomiciliario();
+        ov.querySelectorAll('[data-dedit]').forEach(b => b.onclick = () => Views.domicilios.formDomiciliario(b.dataset.dedit));
+        ov.querySelectorAll('[data-ddel]').forEach(b => b.onclick = async () => {
+          const d = DB.d.domiciliarios.find(x=>x.id===b.dataset.ddel);
+          if (!d) return;
+          if (!(await UI.confirm('¿Eliminar a ' + d.nombre + '?', {ok:'Eliminar', danger:true}))) return;
+          d.borrado = true; d.activo = false; d.act = Util.now();
+          DB.touch('domiciliarios'); Sync.enqueue('domiciliarios','update', d);
+          DB.log('domiciliario:eliminar', d.nombre);
+          UI.toast('Domiciliario eliminado.','ok');
+          UI.closeAll(); Router.render();
+        });
+      }
+    });
+  },
+  formDomiciliario(id){
+    const d = id ? (DB.d.domiciliarios||[]).find(x=>x.id===id) : null;
+    UI.formModal({title: d ? 'Editar domiciliario' : 'Nuevo domiciliario', size:'sm',
+      ok: d ? 'Guardar' : 'Crear domiciliario',
+      fields:[
+        {k:'nombre', label:'Nombre completo', val:d?d.nombre:'', req:true, full:true},
+        {k:'telefono', label:'Teléfono', val:d?d.telefono:'', full:true},
+        {k:'activo', label:'Activo', type:'check', val:d?d.activo:true, full:true}
+      ],
+      onSave(data, close){
+        if (!data.nombre.trim()) return 'El nombre es obligatorio.';
+        const obj = Object.assign(d || {id:Util.uid('dm'), enTurno:false, inicioTurno:null, finTurno:null},
+          data, {act:Util.now()});
+        if (!d){ DB.d.domiciliarios.push(obj); }
+        DB.touch('domiciliarios'); Sync.enqueue('domiciliarios', d?'update':'create', obj);
+        DB.log(d?'domiciliario:editar':'domiciliario:crear', obj.nombre);
+        close(); UI.toast(d ? 'Domiciliario actualizado.' : 'Domiciliario creado.','ok');
+        UI.closeAll(); Router.render();
+      }
+    });
+  }
 };
 
 /* --- Comandas: el puente entre el mesero, la parrilla y la caja ------
@@ -7205,6 +7204,7 @@ Views.kds = {
     });
   },
   html(){
+    const fk = State.filters.kdsq || (State.filters.kdsq = {q:''});
     const l = this.lista();
     const enCola = DB.openOrders().filter(o=>o.estado==='pendiente').length;
     const enParrilla = DB.openOrders().filter(o=>o.estado==='preparando').length;
@@ -7214,7 +7214,11 @@ Views.kds = {
       const r = Orders.reloj(o), est = Orders.EST[o.estado];
       const rondas = Math.max(1, ...o.items.map(i=>i.ronda||1));
       const llevar = o.tipo && o.tipo !== 'mesa';
-      return '<div class="kcard ' + r.cls + (llevar?' llevar':'') + (o.estado==='listo'||o.estado==='entregado'?' done':'') + '">' +
+      /* Texto para el buscador por mesa dentro de cocina. */
+      const busca = (llevar ? (POS.TIPOS[o.tipo]||{corto:o.tipo}).corto : 'mesa ' + o.mesa) +
+        ' ' + (o.mesa||'') + ' ' + (o.numero||'') + ' ' + ((DB.user(o.meseroId)||{}).nombre||'');
+      return '<div class="kcard ' + r.cls + (llevar?' llevar':'') + (o.estado==='listo'||o.estado==='entregado'?' done':'') +
+        '" data-busca="' + Util.esc(busca) + '">' +
         (llevar ? '<div class="kllevar">' + Util.ico(POS.TIPOS[o.tipo].ico) +
           POS.TIPOS[o.tipo].corto + (o.domicilio ? ' · ' + Util.money(o.domicilio) : '') + '</div>' : '') +
         '<div class="khead"><div><div class="kmesa">' +
@@ -7246,13 +7250,57 @@ Views.kds = {
       '<h2>Cocina</h2></div>' +
       '<span class="pill right"><span class="dot ' + (Sync.activo() ? (navigator.onLine?'on':'off') : 'off') + '"></span>' +
         (Sync.activo() ? (navigator.onLine ? 'Recibiendo comandas' : 'Sin red del local') : 'Sin servidor configurado') + '</span></div>' +
-      (l.length ? '<div class="kgrid">' + cards + '</div>' :
+      /* Buscador por número de mesa, para ubicar una comanda entre muchas. */
+      '<div class="card" style="margin-bottom:14px"><div class="row wrap">' +
+        '<div class="search">' + Util.ico('search') +
+          '<input class="inp" id="kq" autocomplete="off" inputmode="search" ' +
+          'placeholder="Buscar mesa (número), comanda o mesero" value="' + Util.esc(fk.q) + '"></div>' +
+        (fk.q ? '<button class="btn sm ghost" id="kq-clr">Limpiar</button>' : '') +
+        '<span class="dim right num" id="kq-info" style="font-size:12px"></span>' +
+      '</div></div>' +
+      (l.length ? '<div class="kgrid" id="kq-grid">' + cards + '</div>' :
         '<div class="card">' + UI.empty('La parrilla está al día','Cuando un mesero envíe un pedido aparecerá aquí solo, sin recargar.') + '</div>');
   },
   mount(){
     document.querySelectorAll('[data-adv]').forEach(b => b.onclick = () => Orders.avanzar(b.dataset.adv, b.dataset.to));
     document.querySelectorAll('[data-tk]').forEach(b => b.onclick = () => Ticket.comanda(b.dataset.tk));
     document.querySelectorAll('[data-k]').forEach(b => b.onclick = () => { State.filters.kds.f = b.dataset.k; Router.render(); });
+
+    /* Buscador por mesa: filtra las comandas en pantalla sin repintar. */
+    const fk = State.filters.kdsq || (State.filters.kdsq = {q:''});
+    const kq = document.getElementById('kq');
+    const aplicarFiltroK = () => {
+      const q = Util.norm((fk.q||'').trim());
+      const tarjetas = document.querySelectorAll('.kcard[data-busca]');
+      let vis = 0;
+      tarjetas.forEach(c => {
+        const ok = !q || Util.norm(c.dataset.busca).includes(q);
+        c.style.display = ok ? '' : 'none';
+        if (ok) vis++;
+      });
+      const info = document.getElementById('kq-info');
+      if (info) info.textContent = q ? (vis + ' de ' + tarjetas.length + ' en pantalla') : '';
+      const grid = document.getElementById('kq-grid');
+      let vacio = document.getElementById('kq-vacio');
+      if (q && !vis && grid){
+        if (!vacio){
+          vacio = document.createElement('div');
+          vacio.id = 'kq-vacio';
+          vacio.className = 'card';
+          grid.insertAdjacentElement('afterend', vacio);
+        }
+        vacio.innerHTML = UI.empty('Ninguna comanda coincide', 'Revisa el número de mesa o limpia la búsqueda.');
+        vacio.style.display = '';
+      } else if (vacio) vacio.style.display = 'none';
+    };
+    if (kq){
+      kq.oninput = () => { fk.q = kq.value; aplicarFiltroK(); };
+      if (fk.q){ kq.focus(); kq.setSelectionRange(kq.value.length, kq.value.length); }
+    }
+    const kqc = document.getElementById('kq-clr');
+    if (kqc) kqc.onclick = () => { fk.q = ''; Router.render(); };
+    aplicarFiltroK();
+
     Router._timer = setInterval(Orders.tick, 1000);
   }
 };
@@ -7263,6 +7311,7 @@ Views.orders = {
     return Auth.can('pos') ? '<button class="btn pri" data-act="new">' + Util.ico('plus') + '<span>Nueva mesa</span></button>' : '';
   },
   html(){
+    const fo = State.filters.orders || (State.filters.orders = {q:''});
     const l = DB.openOrders().sort((a,b)=> new Date(b.fecha) - new Date(a.fecha));
     const soloMias = Auth.user && Auth.user.rol === 'mesero';
     const mias = soloMias ? l.filter(o=>o.meseroId===Auth.user.id) : l;
@@ -7277,7 +7326,11 @@ Views.orders = {
     });
     const cards = mias.map(o => {
       const est = Orders.EST[o.estado], min = Orders.minutos(o);
-      return '<div class="mesa-card ' + (o.estado==='listo'?'on':'') + '">' +
+      /* Texto que alimenta el buscador por mesa: el número de mesa manda,
+         pero también sirve el consecutivo de la comanda o el mesero. */
+      const busca = (o.tipo && o.tipo !== 'mesa' ? (POS.TIPOS[o.tipo]||{corto:o.tipo}).corto : 'mesa ' + o.mesa) +
+        ' ' + (o.mesa||'') + ' ' + (o.numero||'') + ' ' + ((DB.user(o.meseroId)||{}).nombre||'');
+      return '<div class="mesa-card ' + (o.estado==='listo'?'on':'') + '" data-busca="' + Util.esc(busca) + '">' +
         '<div class="row"><div><div style="font-family:var(--serif);font-size:19px">' +
           (o.tipo && o.tipo !== 'mesa' ? Util.esc(POS.TIPOS[o.tipo].corto) : 'Mesa ' + Util.esc(o.mesa)) + '</div>' +
         '<div class="dim num" style="font-size:11px">' + Util.esc(o.numero) + ' · ' + min + ' min · ' +
@@ -7349,14 +7402,16 @@ Views.orders = {
         UI.kpi('Platos en curso', String(mias.reduce((a,o)=>a + o.items.reduce((b,i)=>b+i.qty,0), 0)),
           'Sumando todas tus mesas') +
       '</div>' +
-      (!soloMias && Object.keys(porMesero).length > 1 ?
-        '<div class="card pad0" style="margin-bottom:14px"><div class="card-h"><h3>Reparto por mesero</h3></div>' +
-        UI.table([{t:'Mesero'},{t:'Mesas',n:1},{t:'En mesa',n:1}],
-          Object.entries(porMesero).sort((a,b)=>b[1].total-a[1].total).map(([id,v]) =>
-            '<tr><td>' + Util.esc((DB.user(id)||{}).nombre || '—') + '</td>' +
-            '<td class="n">' + v.mesas + '</td><td class="n">' + Util.money(v.total) + '</td></tr>')) +
-        '</div>' : '') +
-      (mias.length ? '<div class="grid g-3">' + cards + '</div>' :
+      /* Buscador por número de mesa: filtra las tarjetas en vivo, sin
+         recargar la vista, para que el mesero llegue a su mesa de un toque. */
+      '<div class="card" style="margin-bottom:14px"><div class="row wrap">' +
+        '<div class="search">' + Util.ico('search') +
+          '<input class="inp" id="oq" autocomplete="off" inputmode="search" ' +
+          'placeholder="Buscar mesa (número), comanda o mesero" value="' + Util.esc(fo.q) + '"></div>' +
+        (fo.q ? '<button class="btn sm ghost" id="oq-clr">Limpiar</button>' : '') +
+        '<span class="dim right num" id="oq-info" style="font-size:12px"></span>' +
+      '</div></div>' +
+      (mias.length ? '<div class="grid g-3" id="oq-grid">' + cards + '</div>' :
         '<div class="card">' + UI.empty('No hay mesas abiertas',
           Auth.can('pos') ? 'Arma el pedido en Vender y presiona Enviar a cocina.' : 'Las comandas abiertas aparecerán aquí.') + '</div>') +
       panelSuspendidas +
@@ -7366,7 +7421,16 @@ Views.orders = {
             '<td>' + Util.esc((DB.user(o.meseroId)||{}).nombre||'—') + '</td>' +
             '<td class="num">' + Util.esc(o.numeroVenta||'—') + '</td>' +
             '<td class="n">' + Util.money(Orders.total(o)) + '</td></tr>'),
-          {emptyTitle:'Sin comandas cerradas hoy', emptyMsg:'Cuando la caja cobre una mesa aparecerá aquí.'}) + '</div>';
+          {emptyTitle:'Sin comandas cerradas hoy', emptyMsg:'Cuando la caja cobre una mesa aparecerá aquí.'}) + '</div>' +
+      /* Reparto por mesero: es consulta de cierre, no de servicio; va de
+         último para no empujar las mesas hacia abajo. */
+      (!soloMias && Object.keys(porMesero).length > 1 ?
+        '<div class="card pad0" style="margin-top:14px"><div class="card-h"><h3>Reparto por mesero</h3></div>' +
+        UI.table([{t:'Mesero'},{t:'Mesas',n:1},{t:'En mesa',n:1}],
+          Object.entries(porMesero).sort((a,b)=>b[1].total-a[1].total).map(([id,v]) =>
+            '<tr><td>' + Util.esc((DB.user(id)||{}).nombre || '—') + '</td>' +
+            '<td class="n">' + v.mesas + '</td><td class="n">' + Util.money(v.total) + '</td></tr>')) +
+        '</div>' : '');
   },
   mount(){
     document.querySelectorAll('[data-add]').forEach(b => b.onclick = () => POS.loadOrder(b.dataset.add, false));
@@ -7381,7 +7445,50 @@ Views.orders = {
     document.querySelectorAll('[data-oline]').forEach(b => b.onclick = () => Orders.quitarLinea(b.dataset.oline, Number(b.dataset.idx)));
     const n = document.querySelector('[data-act=new]');
     if (n) n.onclick = () => { POS.reset(); POS.askMesa(()=>Router.go('pos')); };
-    Router._timer = setInterval(()=>{ if (!UI._stack.length) Router.render(); }, 20000);
+
+    /* Buscador por mesa. Filtra el DOM en vivo (sin volver a pintar la
+       vista) para que no se pierda el foco ni el texto mientras se teclea. */
+    const fo = State.filters.orders || (State.filters.orders = {q:''});
+    const oq = document.getElementById('oq');
+    const aplicarFiltro = () => {
+      const q = Util.norm((fo.q||'').trim());
+      const tarjetas = document.querySelectorAll('[data-busca]');
+      let vis = 0;
+      tarjetas.forEach(c => {
+        const ok = !q || Util.norm(c.dataset.busca).includes(q);
+        c.style.display = ok ? '' : 'none';
+        if (ok) vis++;
+      });
+      const info = document.getElementById('oq-info');
+      if (info) info.textContent = q ? (vis + ' de ' + tarjetas.length + ' en pantalla') : '';
+      const grid = document.getElementById('oq-grid');
+      let vacio = document.getElementById('oq-vacio');
+      if (q && !vis && grid){
+        if (!vacio){
+          vacio = document.createElement('div');
+          vacio.id = 'oq-vacio';
+          vacio.className = 'card';
+          grid.insertAdjacentElement('afterend', vacio);
+        }
+        vacio.innerHTML = UI.empty('Ninguna mesa coincide', 'Revisa el número o limpia la búsqueda.');
+        vacio.style.display = '';
+      } else if (vacio) vacio.style.display = 'none';
+    };
+    if (oq){
+      oq.oninput = () => { fo.q = oq.value; aplicarFiltro(); };
+      if (fo.q){ oq.focus(); oq.setSelectionRange(oq.value.length, oq.value.length); }
+    }
+    const oqc = document.getElementById('oq-clr');
+    if (oqc) oqc.onclick = () => { fo.q = ''; Router.render(); };
+    aplicarFiltro();
+
+    /* El refresco automático no puede borrar lo que se está escribiendo. */
+    Router._timer = setInterval(()=>{
+      if (UI._stack.length) return;
+      const act = document.activeElement;
+      if (act && act.id === 'oq') return;
+      Router.render();
+    }, 20000);
   }
 };
 
