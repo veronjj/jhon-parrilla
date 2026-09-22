@@ -1678,6 +1678,22 @@ const DB = {
       migrados++;
     });
     if (migrados) this.touch('meats');
+    /* Un plato sin código rompía la creación de platos nuevos. Se le asigna
+       uno al cargar, para que los datos ya guardados dejen de estorbar. */
+    const codigosEnUso = new Set((this.d.products||[])
+      .map(pr => String(pr.codigo == null ? '' : pr.codigo).trim().toLowerCase())
+      .filter(Boolean));
+    let sinCodigo = 0, siguiente = 1;
+    (this.d.products||[]).forEach(pr => {
+      if (String(pr.codigo == null ? '' : pr.codigo).trim()) return;
+      let cod;
+      do { cod = 'PLT-' + String(siguiente++).padStart(3,'0'); }
+      while (codigosEnUso.has(cod.toLowerCase()));
+      codigosEnUso.add(cod.toLowerCase());
+      pr.codigo = cod; pr.act = Util.now();
+      sinCodigo++;
+    });
+    if (sinCodigo) this.touch('products');
     /* INTERVENCIÓN: al instalar esta actualización, 'gastos',
        'domiciliarios' y 'domTurnos' pasan a guardarse de forma
        permanente (antes 'gastos' y 'domiciliarios' no estaban en
@@ -3823,7 +3839,22 @@ const UI = {
             else if (el.type === 'number') data[el.name] = el.value === '' ? null : Number(el.value);
             else data[el.name] = el.value.trim();
           });
-          Promise.resolve(o.onSave(data, close)).then(err => {
+          /* Si onSave falla, el usuario tiene que enterarse. Antes, una
+             excepción aquí dejaba el formulario intacto y mudo: parecía que
+             el botón de guardar estuviera muerto. */
+          let resultado;
+          try{ resultado = o.onSave(data, close); }
+          catch(e){
+            console.error('Error al guardar el formulario:', e);
+            UI.toast('No se pudo guardar: ' + (e && e.message ? e.message : e) +
+              '. Nada quedó a medias; vuelve a intentarlo.','bad', 7000);
+            return;
+          }
+          Promise.resolve(resultado).catch(e => {
+            console.error('Error al guardar el formulario:', e);
+            UI.toast('No se pudo guardar: ' + (e && e.message ? e.message : e) + '.','bad', 7000);
+            return null;
+          }).then(err => {
             if (typeof err === 'string') UI.toast(err, 'bad');
           });
         };
@@ -4483,6 +4514,53 @@ const POS = {
     return {subtotal, descuento, base, impuesto, propina, domicilio, costo,
             total: base + impuesto + propina + domicilio};
   },
+  /* CORRECCIÓN DE RAÍZ (se cobraba de menos): al pulsar "Agregar" sobre una
+     comanda abierta, el carrito arranca VACÍO — solo lleva la ronda nueva —
+     pero this.orderId ya apunta a la comanda. El botón del carrito decía
+     entonces "Cobrar $20.000" (solo la ronda nueva) y, al confirmarlo, la
+     venta se hacía por ese valor y la comanda entera quedaba marcada como
+     'cobrada': las rondas anteriores nunca se facturaban. Era facilísimo
+     caer en el error, porque el botón está justo debajo de "Agregar a la
+     comanda". La regla correcta es una sola: si hay una comanda abierta, la
+     cuenta es la comanda COMPLETA más lo que aún no se ha enviado. */
+
+  /** Platos que ya están en la comanda abierta y todavía no en el carrito. */
+  pendientesComanda(){
+    if (!this.orderId) return [];
+    const o = DB.order(this.orderId);
+    if (!o || !Array.isArray(o.items)) return [];
+    if (o.estado === 'cobrada' || o.estado === 'cancelada' || o.estado === 'eliminada') return [];
+    const enCarro = new Set(this.cart.map(i => i.lid).filter(Boolean));
+    return o.items.filter(i => !i.lid || !enCarro.has(i.lid)).map(i => ({
+      lid: i.lid || Util.uid('l'), pid:i.pid, nombre:i.nombre, precio:i.precio,
+      gramos:i.gramos, qty:i.qty, nota:i.nota || '',
+      adiciones: Array.isArray(i.adiciones) ? i.adiciones.map(a=>Object.assign({},a)) : [],
+      carne: i.carne, carneNombre: i.carneNombre || ''
+    }));
+  },
+  /** Suma de lo que ya está en cocina y aún no se ve en el carrito. */
+  subtotalPendiente(){
+    return this.pendientesComanda().reduce((a,i) =>
+      a + (i.precio + (i.adiciones||[]).reduce((s,x)=>s+(x.precio||0),0)) * i.qty, 0);
+  },
+  /** Los totales de la cuenta completa de la mesa, sin tocar el carrito. */
+  calcCuenta(){
+    const faltan = this.pendientesComanda();
+    if (!faltan.length) return this.calc();
+    const original = this.cart;
+    this.cart = faltan.concat(original);
+    const t = this.calc();
+    this.cart = original;
+    return t;
+  },
+  /** Mete en el carrito lo ya enviado a cocina. Devuelve cuántas líneas sumó. */
+  completarCuenta(){
+    const faltan = this.pendientesComanda();
+    if (!faltan.length) return 0;
+    this.cart = faltan.concat(this.cart);
+    return faltan.length;
+  },
+
   /** El pedido sale del local: lo lleva un mensajero o lo recoge el cliente. */
   esLlevar(){ return this.tipo === 'domicilio' || this.tipo === 'recoge'; },
   TIPOS:{
@@ -5146,7 +5224,11 @@ const POS = {
   paintCart(){
     const box = document.getElementById('citems'), foot = document.getElementById('cfoot');
     if (!box) return;
-    const t = this.calc(), c = DB.d.config;
+    /* El pie muestra la cuenta completa de la mesa, no solo la ronda que se
+       está armando: así el botón de cobrar nunca anuncia menos de lo que
+       realmente debe la mesa. */
+    const pendSub = this.subtotalPendiente();
+    const t = this.calcCuenta(), c = DB.d.config;
     document.getElementById('cartCount').textContent = this.cart.reduce((a,i)=>a+i.qty,0);
 
     box.innerHTML = (this.cart.length
@@ -5183,7 +5265,9 @@ const POS = {
       UI.empty('El pedido está vacío','Toca un plato para agregarlo.'));
 
     foot.innerHTML =
-      '<div class="tot-row"><span>Subtotal</span><b>' + Util.money(t.subtotal) + '</b></div>' +
+      (pendSub ? '<div class="tot-row" style="color:var(--brass-hi)"><span>Ya en cocina (rondas anteriores)</span>' +
+        '<b>' + Util.money(pendSub) + '</b></div>' : '') +
+      '<div class="tot-row"><span>Subtotal' + (pendSub ? ' de la mesa' : '') + '</span><b>' + Util.money(t.subtotal) + '</b></div>' +
       (t.descuento ? '<div class="tot-row"><span>Descuento</span><b style="color:var(--ember-hi)">−' + Util.money(t.descuento) + '</b></div>' : '') +
       (t.impuesto ? '<div class="tot-row"><span>' + Util.esc(c.impuestoNombre) + ' ' + c.impuesto + '%</span><b>' + Util.money(t.impuesto) + '</b></div>' : '') +
       (t.propina ? '<div class="tot-row"><span>Propina ' + this.propinaPct + '%</span><b>' + Util.money(t.propina) + '</b></div>' : '') +
@@ -5438,7 +5522,17 @@ const POS = {
       if (o) this.orderId = o.id;
     }
     const ronda = o ? (Math.max(0, ...o.items.map(i=>i.ronda||1)) + 1) : 1;
-    const nuevos = this.cart.map(i => ({
+    /* Una línea que YA está en la comanda no se vuelve a enviar. Pasa, por
+       ejemplo, si se abrió el cobro (que trae al carrito toda la mesa), se
+       pulsó "Volver" y después "Agregar a la comanda": sin este filtro la
+       mesa quedaría con los platos duplicados y cobrando de más. */
+    const yaEnComanda = o ? new Set((o.items||[]).map(i=>i.lid).filter(Boolean)) : new Set();
+    const porEnviar = this.cart.filter(i => !i.lid || !yaEnComanda.has(i.lid));
+    if (o && !porEnviar.length){
+      UI.toast('Esos platos ya están en la comanda ' + o.numero + '. No se envió nada repetido.','info', 4600);
+      return;
+    }
+    const nuevos = porEnviar.map(i => ({
       lid:i.lid, pid:i.pid, nombre:i.nombre, precio:i.precio, qty:i.qty, gramos:i.gramos,
       nota:i.nota, adiciones:i.adiciones||[], total:(i.precio + (i.adiciones||[]).reduce((s,x)=>s+x.precio,0))*i.qty,
       carne: i.carne !== undefined ? i.carne : ((DB.product(i.pid)||{}).carne||null),
@@ -5524,7 +5618,7 @@ const POS = {
     this.domicilio = Number(o.domicilio)||0;
     this.entrega = o.entrega ? Object.assign({}, o.entrega) : {direccion:'', telefono:'', quien:'mensajero'};
     if (paraCobrar){
-      this.cart = o.items.map(i => ({lid:Util.uid('l'), pid:i.pid, nombre:i.nombre, precio:i.precio,
+      this.cart = o.items.map(i => ({lid:i.lid || Util.uid('l'), pid:i.pid, nombre:i.nombre, precio:i.precio,
         gramos:i.gramos, qty:i.qty, nota:i.nota||'', adiciones:Array.isArray(i.adiciones)?i.adiciones.map(a=>Object.assign({},a)):[], carne:i.carne, carneNombre:i.carneNombre||''}));
     }
     Router.go('pos');
@@ -5534,9 +5628,18 @@ const POS = {
 
   /* --- cobro --- */
   pay(personas){
-    if (!this.cart.length) return;
+    if (!this.cart.length && !this.pendientesComanda().length) return;
     if (!Auth.can('cobrar')) return UI.toast('La cuenta la cierra la caja. Envía el pedido a cocina y avisa en caja.','warn', 4200);
     if (!DB.openCash()) return UI.toast('Abre la caja antes de cobrar.','warn');
+    /* Cobrar una comanda abierta es cobrarla completa: se suman primero los
+       platos de las rondas anteriores que no estuvieran en el carrito. */
+    const sumados = this.completarCuenta();
+    if (sumados){
+      this.paint();
+      const oc = DB.order(this.orderId) || {};
+      UI.toast('Se sumaron ' + sumados + ' plato(s) de rondas anteriores de la comanda ' +
+        (oc.numero || '') + '. La cuenta se cobra completa.','info', 6000);
+    }
     const t = this.calc();
     const METODOS = ['Efectivo','Tarjeta débito','Tarjeta crédito','Transferencia','Nequi','Daviplata','Otro'];
     let pagos = personas
@@ -5751,6 +5854,18 @@ const POS = {
     c.consecutivo++;
     const orden = this.orderId ? DB.order(this.orderId) : null;
     if (orden){
+      /* Si se cobró algo que nunca se envió a cocina, queda anotado en la
+         comanda: así lo facturado y la comanda dicen lo mismo. */
+      const yaEn = new Set((orden.items||[]).map(i=>i.lid).filter(Boolean));
+      const rondaFin = Math.max(0, ...(orden.items||[]).map(i=>i.ronda||1)) + 1;
+      (this.cart||[]).forEach(i => {
+        if (i.lid && yaEn.has(i.lid)) return;
+        orden.items.push({lid:i.lid || Util.uid('l'), pid:i.pid, nombre:i.nombre, precio:i.precio,
+          qty:i.qty, gramos:i.gramos, nota:i.nota||'', adiciones:i.adiciones||[],
+          total:(i.precio + (i.adiciones||[]).reduce((s,x)=>s+(x.precio||0),0))*i.qty,
+          carne: i.carne !== undefined ? i.carne : null, carneNombre:i.carneNombre||'',
+          ronda:rondaFin, st:'cobrado'});
+      });
       orden.estado = 'cobrada'; orden.ventaId = venta.id; orden.numeroVenta = numero;
       orden.tiempos = Object.assign({}, orden.tiempos, {cobrado:venta.fecha});
       orden.act = Util.now();
@@ -7705,12 +7820,23 @@ const Ticket = {
   /** Comanda de cocina: papel grande, con adiciones detalladas y precio para despacho. */
   comanda(orderId, ronda){
     const o = DB.order(orderId); if (!o) return;
-    const items = o.items.filter(i => !ronda || i.ronda === ronda);
+    /* Si se pide una ronda que no tiene platos (por ejemplo al reimprimir),
+       se imprime la comanda completa en vez de un tiquete vacío. */
+    let items = o.items.filter(i => !ronda || i.ronda === ronda);
+    if (!items.length){ items = o.items.slice(); ronda = null; }
     const llevar = o.tipo && o.tipo !== 'mesa';
     /* Total de adiciones por ítem */
     const adTotalItem = (i) => (i.adiciones||[]).reduce((s,a)=>s+a.precio,0);
     /* Subtotal de la comanda (esta ronda) */
     const subtotalRonda = items.reduce((s,i)=>(s + (i.precio + adTotalItem(i))*i.qty),0);
+    /* CORRECCIÓN: este tiquete es de cocina y, en una ronda posterior, su
+       total es solo el de esa ronda. Impreso a secas como "TOTAL", se
+       confundía con la cuenta de la mesa y se cobraba de menos. Cuando la
+       mesa ya trae rondas anteriores se dice explícitamente de qué ronda es
+       el total y cuánto lleva acumulado la mesa. */
+    const hayAnteriores = items.length !== (o.items||[]).length;
+    const cargoDom = llevar ? (Number(o.domicilio)||0) : 0;
+    const totalMesa = Orders.total(o) + cargoDom;
     const cuerpo = '<div class="ticket">' +
       (Ticket.logoImp() ? '<div class="c"><img src="' + Ticket.logoImp() +
         '" style="max-width:45%;height:auto;margin-bottom:3px;background:#fff"></div>' : '') +
@@ -7720,7 +7846,8 @@ const Ticket = {
         (llevar ? Util.esc(o.mesa || POS.TIPOS[o.tipo].corto) : 'MESA ' + Util.esc(o.mesa)) + '</div>' +
       '<div class="c tk-sub">' + Util.esc(o.numero) + (ronda>1 ? ' · RONDA ' + ronda : ' · RONDA 1') + '</div>' +
       '<div class="c tk-sub">' + Util.time(Util.now()) + ' · ' + Util.esc((DB.user(o.meseroId)||{}).nombre||'Sistema') + '</div>' +
-      '<div class="c tk-sub">Ítems: ' + items.reduce((a,i)=>a+i.qty,0) + ' · Total: $' + Util.money(subtotalRonda,false) + '</div><hr>' +
+      '<div class="c tk-sub">Ítems: ' + items.reduce((a,i)=>a+i.qty,0) +
+        ' · ' + (hayAnteriores ? 'Esta ronda' : 'Total') + ': $' + Util.money(subtotalRonda,false) + '</div><hr>' +
       items.map(i => {
         const adiciones = i.adiciones||[];
         const adTotal = adTotalItem(i);
@@ -7753,9 +7880,15 @@ const Ticket = {
          los productos (más domicilio si aplica), alineado a la derecha
          en la parte inferior del ticket. */
       '<hr><div class="tk-total-row">' +
-        '<span class="tk-total-lbl">TOTAL</span>' +
-        '<span class="tk-total-val">' + Util.money(subtotalRonda + (llevar ? (Number(o.domicilio)||0) : 0)) + '</span>' +
+        '<span class="tk-total-lbl">' + (hayAnteriores ? 'TOTAL RONDA ' + (ronda||1) : 'TOTAL') + '</span>' +
+        '<span class="tk-total-val">' + Util.money(subtotalRonda + cargoDom) + '</span>' +
       '</div>' +
+      (hayAnteriores
+        ? '<div class="tk-total-row"><span class="tk-total-lbl">ACUMULADO MESA</span>' +
+            '<span class="tk-total-val">' + Util.money(totalMesa) + '</span></div>' +
+          '<div class="c tk-sub" style="margin-top:4px">** NO COBRAR CON ESTE TIQUETE **<br>' +
+            'Es la comanda de cocina. La cuenta completa se cobra en caja.</div>'
+        : '') +
       '</div>';
     /* INTERVENCIÓN: en tablet/móvil, junto al botón Imprimir se agrega un
        botón rojo en alto relieve "Editar Comanda" del mismo tamaño, para
@@ -8200,13 +8333,15 @@ const Importar = {
         const datos = {nombre:r.nombre, precio:r.precio, costo:r.costo, gramos:r.gramos,
           tiempo:r.tiempo, desc:r.desc, ico:r.ico, cat:r.cat || primera,
           carne:r.carne || null, activo:true, act:Util.now()};
+        /* Ningún plato puede quedar sin código: uno solo así bloqueaba
+           después la creación de platos nuevos. */
+        const codImp = () => 'IMP-' + String(DB.d.products.length + 1).padStart(3,'0');
         if (r._accion === 'actualizar'){
           const p = DB.product(r._id);
-          Object.assign(p, datos, {codigo:r.codigo || p.codigo});
+          Object.assign(p, datos, {codigo: r.codigo || p.codigo || codImp()});
           Sync.enqueue('products','update', p); actualizados++;
         } else {
-          const p = Object.assign({id:Util.uid('p'),
-            codigo:r.codigo || ('IMP-' + String(DB.d.products.length+1).padStart(3,'0'))}, datos);
+          const p = Object.assign({id:Util.uid('p'), codigo: r.codigo || codImp()}, datos);
           DB.d.products.push(p); Sync.enqueue('products','create', p); creados++;
         }
       });
@@ -8535,7 +8670,21 @@ Views.menu = {
       ],
       onSave(d, close){
         if (!Glifo.G[d.ico]) d.ico = '';   // vacío = se deduce del nombre
-        if (DB.prods().some(x => x.codigo.toLowerCase() === String(d.codigo).toLowerCase() && (!p || x.id !== p.id)))
+        /* CORRECCIÓN DE RAÍZ (no se podían crear platos nuevos): esta
+           comprobación hacía x.codigo.toLowerCase() sobre TODOS los platos.
+           Bastaba que uno solo, viejo o importado, no tuviera código para
+           que reventara aquí con un TypeError: el guardado se interrumpía,
+           no se creaba nada y no aparecía ningún mensaje — el botón "Crear
+           plato" parecía no hacer nada. Se compara de forma segura y los
+           platos sin código simplemente no cuentan como duplicado. */
+        const codNuevo = String(d.codigo == null ? '' : d.codigo).trim();
+        if (!codNuevo) d.codigo = siguienteCodigo(d.cat);
+        else d.codigo = codNuevo;
+        const codCmp = String(d.codigo).toLowerCase();
+        if (DB.prods().some(x => {
+              const c = String(x.codigo == null ? '' : x.codigo).trim().toLowerCase();
+              return c && c === codCmp && (!p || x.id !== p.id);
+            }))
           return 'Ya existe un plato con ese código interno.';
         // Bebida nueva con el nombre del plato: el atajo al cargar la carta de bar
         if (d.carne === '__nueva'){
