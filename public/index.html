@@ -567,6 +567,9 @@ td.n,th.n{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-
 }
 .ci-carne{font-size:11.5px;color:var(--brass-hi);font-weight:600;margin-top:1px}
 .card.emp{transition:.14s var(--ease)}
+/* Un Util.ico() suelto (fuera de un .btn) no tenía regla de tamaño y el SVG
+   se estiraba a todo el ancho de la tarjeta. */
+.ico-min{width:12px;height:12px;stroke-width:2;flex:none;vertical-align:-2px}
 .card.emp.comio{border-color:rgba(62,155,98,.32);background:linear-gradient(180deg,rgba(62,155,98,.05),transparent)}
 tr.fila-total td{border-top:1.5px solid var(--brass-dim);font-weight:700;color:var(--bone);
   background:var(--char-850);font-size:13px}
@@ -1908,13 +1911,47 @@ const DB = {
   },
   /** Lo que ya consumió el personal en una fecha. */
   mealsOf(fecha){ return this.meals().filter(m => m.fecha.slice(0,10) === (fecha || Util.today())); },
-  /** El registro de hoy de una persona, si ya comió. */
-  mealHoy(userId, fecha){
-    const meals = this.mealsOf(fecha);
+  /** Horas que una persona queda bloqueada después de comer. */
+  BLOQUEO_COMIDA_H:8,
+  horasBloqueoComida(){ return Number(this.d.config.alimentacionHoras) || this.BLOQUEO_COMIDA_H; },
+  /** CORRECCIÓN DE RAÍZ: el bloqueo se calculaba sobre mealsOf(fecha), es
+      decir, solo entre los platos de UN día del calendario. Quien comía a
+      las 11 de la noche quedaba libre a la medianoche, porque su registro
+      dejaba de pertenecer a "hoy"; y al consultar otra fecha en el filtro,
+      la app daba por bloqueado a todo el que hubiera comido ese día, aunque
+      hubiera pasado una semana. La única regla es la ventana de 8 horas
+      desde su última comida, sin importar en qué día caiga. El filtro de
+      fecha queda solo para buscar y revisar el historial.
+      Devuelve el último plato dentro de la ventana, o null si está libre. */
+  mealHoy(userId){
     const ahora = Date.now();
-    const HORAS_BLOQUEO = 8;
-    return meals.find(m => m.userId === userId &&
-      (ahora - new Date(m.fecha).getTime()) < HORAS_BLOQUEO * 3600000) || null;
+    const ventana = this.horasBloqueoComida() * 3600000;
+    let ultimo = null, ultimoT = 0;
+    this.meals().forEach(m => {
+      if (m.userId !== userId) return;
+      const t = new Date(m.fecha).getTime();
+      if (!t || isNaN(t)) return;
+      if (ahora - t >= ventana) return;      // ya se cumplieron las 8 horas
+      if (t > ultimoT){ ultimoT = t; ultimo = m; }
+    });
+    return ultimo;
+  },
+  /** Momento exacto en que se libera el bloqueo de un registro. */
+  mealLibreEn(reg){
+    if (!reg) return null;
+    const t = new Date(reg.fecha).getTime();
+    if (!t || isNaN(t)) return null;
+    return new Date(t + this.horasBloqueoComida() * 3600000);
+  },
+  /** Texto corto de lo que falta para que se libere: "2 h 15 min". */
+  mealFaltaTxt(reg){
+    const libre = this.mealLibreEn(reg);
+    if (!libre) return '';
+    const ms = libre.getTime() - Date.now();
+    if (ms <= 0) return '';
+    const min = Math.ceil(ms / 60000);
+    const h = Math.floor(min / 60), m2 = min % 60;
+    return h ? (h + ' h ' + (m2 ? m2 + ' min' : '').trim()).trim() : (m2 + ' min');
   },
   ABIERTAS:['pendiente','preparando','listo','entregado'],
   openOrders(){ return this.orders().filter(o => this.ABIERTAS.includes(o.estado)); },
@@ -9815,38 +9852,60 @@ Views.comidas = {
     const faltan = this.faltantes();
     const esHoy = f.fecha === Util.today();
 
+    const horas = DB.horasBloqueoComida();
     const tarjeta = u => {
+      /* Lo único que bloquea es la ventana de horas desde su última comida.
+         La fecha de arriba no bloquea nada: sirve para consultar. */
+      const bloqueo = DB.mealHoy(u.id);
       const reg = delDia.find(m => m.userId === u.id);
-      return '<div class="card emp ' + (reg?'comio':'') + '">' +
+      const muestra = bloqueo || reg;          // qué plato se enseña en la tarjeta
+      const libre = bloqueo ? DB.mealLibreEn(bloqueo) : null;
+      const falta = bloqueo ? DB.mealFaltaTxt(bloqueo) : '';
+      const badge = bloqueo
+        ? '<span class="badge warn right">Bloqueado</span>'
+        : (reg ? '<span class="badge ok right">Ya comió</span>'
+               : '<span class="badge mut right">Pendiente</span>');
+      return '<div class="card emp ' + (muestra?'comio':'') + '">' +
         '<div class="row" style="gap:11px">' +
           '<div class="avatar">' + Util.esc(u.nombre.slice(0,1)) + '</div>' +
           '<div style="min-width:0"><div style="font-weight:600;font-size:13.5px">' + Util.esc(u.nombre) + '</div>' +
           '<div class="dim" style="font-size:11px">' + Util.esc(u.cargo) +
             (u.fuente === 'empleado' ? '' : ' · con acceso') + '</div></div>' +
-          (reg ? '<span class="badge ok right">Ya comió</span>' : '<span class="badge mut right">Pendiente</span>') +
+          badge +
         '</div>' +
-        (reg
+        (muestra
           ? '<div style="margin-top:11px;padding-top:11px;border-top:1px solid var(--line-soft)">' +
               '<div class="row"><div>' +
-                '<div style="font-size:13px;font-weight:600">' + Util.esc(reg.carneNombre) + '</div>' +
-                '<div class="dim" style="font-size:11px">' + Util.ico('clock') + ' ' + Util.time(reg.fecha) +
-                  (reg.nota ? ' · ' + Util.esc(reg.nota) : '') + '</div>' +
+                '<div style="font-size:13px;font-weight:600">' + Util.esc(muestra.carneNombre) + '</div>' +
+                '<div class="dim" style="font-size:11px">' + Util.ico('clock','ico-min') + ' ' +
+                  ((muestra.fecha||'').slice(0,10) === Util.today() ? Util.time(muestra.fecha) : Util.dt(muestra.fecha)) +
+                  (muestra.nota ? ' · ' + Util.esc(muestra.nota) : '') + '</div>' +
               '</div>' +
               (Auth.can('anular')
-                ? '<button class="btn sm ghost right" data-anular="' + reg.id + '" style="color:var(--ash-dim)">Anular</button>'
-                : '') + '</div>' +
-              '<div style="margin-top:8px;padding:6px 10px;border-radius:6px;background:rgba(62,155,98,.08);font-size:11px;color:var(--ok)">' +
-                Util.ico('lock') + ' Bloqueado — ya consumió su plato del turno</div></div>'
-          : '<button class="btn gold wide" data-dar="' + u.id + '" style="margin-top:11px"' +
-              (esHoy ? '' : ' disabled') + '>' + Util.ico('plus') + ' Registrar comida</button>') +
+                ? '<button class="btn sm ghost right" data-anular="' + muestra.id + '" style="color:var(--ash-dim)">Anular</button>'
+                : '') + '</div></div>'
+          : '') +
+        (bloqueo
+          ? '<div style="margin-top:8px;padding:7px 10px;border-radius:6px;background:rgba(212,175,95,.10);' +
+              'font-size:11px;color:var(--brass-hi);line-height:1.5">' +
+              Util.ico('lock','ico-min') + ' Bloqueado ' + horas + ' h — se habilita a las ' +
+              Util.esc(Util.time(libre)) + (falta ? ' (faltan ' + Util.esc(falta) + ')' : '') + '</div>'
+          : '<button class="btn gold wide" data-dar="' + u.id + '" style="margin-top:11px">' +
+              Util.ico('plus') + ' Registrar comida</button>') +
       '</div>';
     };
 
     return '<div class="view-head"><div><div class="eyebrow">' +
-        (esHoy ? 'Hoy' : Util.date(f.fecha)) + ' · un plato por persona al día</div>' +
+        (esHoy ? 'Hoy' : Util.date(f.fecha)) + ' · un plato por persona cada ' + horas + ' horas</div>' +
         '<h2>Alimentación empleados</h2></div>' +
-        '<div class="row right"><label class="f">Fecha<input class="inp" type="date" id="cmFecha" value="' +
-          f.fecha + '" max="' + Util.today() + '"></label></div></div>' +
+        '<div class="row right"><label class="f">Fecha de consulta' +
+          '<input class="inp" type="date" id="cmFecha" value="' + f.fecha + '" max="' + Util.today() + '">' +
+          '</label></div></div>' +
+        (esHoy ? '' : '<div class="card" style="margin-bottom:14px;padding:10px 14px">' +
+          '<div class="dim" style="font-size:12px;line-height:1.5">' +
+          'Estás consultando el ' + Util.esc(Util.date(f.fecha)) + '. La fecha solo filtra lo que se muestra: ' +
+          'registrar una comida siempre se hace con la hora actual, y el bloqueo depende únicamente de las ' +
+          horas + ' horas desde la última comida de cada persona.</div></div>') +
 
       (faltan.length ? '<div class="card" style="margin-bottom:14px;border-color:var(--ember-dim)">' +
         '<div class="row"><span style="color:var(--ember-hi);display:flex">' + Util.ico('warn') + '</span>' +
@@ -10010,16 +10069,21 @@ Views.comidas = {
               '<option value="">Elige a la persona…</option>' +
               activos.map(u => {
                 const comio = DB.mealHoy(u.id);
+                const libre = comio ? DB.mealLibreEn(comio) : null;
                 return '<option value="' + u.id + '"' + (u.id===sel?' selected':'') + (comio?' disabled':'') + '>' +
-                  Util.esc(u.nombre) + ' · ' + Util.esc(u.cargo) + (comio ? ' — ya comió (8h)' : '') + '</option>';
+                  Util.esc(u.nombre) + ' · ' + Util.esc(u.cargo) +
+                  (comio ? ' — bloqueado hasta ' + Util.time(libre) : '') + '</option>';
               }).join('') +
             '</select>' +
             (yaComio
               ? '<div class="card" style="margin-top:12px;border-color:var(--ember-dim)">' +
                 '<div class="row"><span style="color:var(--ember-hi);display:flex">' + Util.ico('lock') + '</span>' +
-                '<div><b style="font-size:13.5px">Ya comió hoy</b><div class="dim" style="font-size:12px">' +
+                '<div><b style="font-size:13.5px">Bloqueado por ' + DB.horasBloqueoComida() + ' horas</b>' +
+                '<div class="dim" style="font-size:12px">' +
                 Util.esc(yaComio.carneNombre) + ' a las ' + Util.time(yaComio.fecha) +
-                '. Podrá volver a registrarse mañana.</div></div></div></div>'
+                '. Se habilita solo a las ' + Util.time(DB.mealLibreEn(yaComio)) +
+                (DB.mealFaltaTxt(yaComio) ? ' (faltan ' + DB.mealFaltaTxt(yaComio) + ')' : '') +
+                '</div></div></div></div>'
               : '<div class="eyebrow" style="margin:14px 0 8px">¿Qué carne? <span class="dim" ' +
                   'style="text-transform:none;letter-spacing:0">· ' + disponibles.length + ' autorizada(s)</span></div>' +
                 '<div class="bandeja-carnes' + (disponibles.length > 8 ? ' compacta' : '') + '">' + disponibles.map(x => {
@@ -10077,8 +10141,10 @@ Views.comidas = {
 
         ov.querySelector('#cmOk').onclick = () => {
           if (!sel) return UI.toast('Elige a la persona.','warn');
-          if (DB.d.config.alimentacionUnaVez !== false && DB.mealHoy(sel))
-            return UI.toast('Esa persona ya comió en las últimas 8 horas. Queda habilitada cuando se cumplan.','warn', 4600);
+          const bloq = DB.mealHoy(sel);
+          if (DB.d.config.alimentacionUnaVez !== false && bloq)
+            return UI.toast('Bloqueado hasta las ' + Util.time(DB.mealLibreEn(bloq)) +
+              (DB.mealFaltaTxt(bloq) ? ' · faltan ' + DB.mealFaltaTxt(bloq) : ''),'warn', 4600);
           if (!carne) return UI.toast('Elige la carne.','warn');
           const nota = (box.querySelector('#cmNota')||{}).value || '';
           const r = Views.comidas.guardar(sel, carne, nota, cantidadHuevos);
@@ -10101,8 +10167,10 @@ Views.comidas = {
     const u = DB.personal(true).find(x => x.id === userId);
     const m = DB.meat(meatId);
     if (!u || !m) return UI.toast('Faltan datos del registro.','bad'), false;
-    if (DB.d.config.alimentacionUnaVez !== false && DB.mealHoy(userId))
-      return UI.toast('Esa persona ya comió en las últimas 8 horas.','warn'), false;
+    const bloqueado = DB.mealHoy(userId);
+    if (DB.d.config.alimentacionUnaVez !== false && bloqueado)
+      return UI.toast('Bloqueado hasta las ' + Util.time(DB.mealLibreEn(bloqueado)) +
+        (DB.mealFaltaTxt(bloqueado) ? ' · faltan ' + DB.mealFaltaTxt(bloqueado) : ''),'warn', 4600), false;
     /* Determinar cantidad: solo Huevos puede ser 2, todo lo demás forzado a 1 */
     const esHuevoItem = /huevo/i.test(Util.norm(m.nombre || ''));
     const cant = esHuevoItem ? Math.min(2, Math.max(1, parseInt(porciones, 10) || 1)) : 1;
@@ -10125,7 +10193,8 @@ Views.comidas = {
       Util.money(reg.costo) + (reg.nota ? ' · ' + reg.nota : ''), reg.id);
     Sync.enqueue('meals','create', reg);
     Sync.enqueue('meats','update', m);
-    UI.toast(u.nombre.split(' ')[0] + ' registrado: ' + m.nombre + (cant > 1 ? ' ×' + cant + ' porciones' : '') + '. Queda bloqueado hasta mañana.','ok', 4600);
+    UI.toast(u.nombre.split(' ')[0] + ' registrado: ' + m.nombre + (cant > 1 ? ' ×' + cant + ' porciones' : '') +
+      '. Se habilita de nuevo a las ' + Util.time(DB.mealLibreEn(reg)),'ok', 4600);
     Router.render();
     return reg;
   },
