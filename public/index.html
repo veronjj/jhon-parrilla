@@ -1638,7 +1638,7 @@ const DB = {
         domicilioActivo:true, domicilioValor:3000, domicilioOpciones:'1000,2000,3000,4000,5000',
         domicilioMin:1000, domicilioMax:5000,
         carnesEmpleados:'Sobre barriga,Posta,Chuleta,Hígado,Cerdo,Chicharrón,Desmechada,Chorizo',
-        alimentacionUnaVez:true
+        alimentacionUnaVez:true, confirmarRepetir:true
       },
       users:[
         {id:'u_adm', nombre:'Jhon Restrepo', usuario:'jhon',   rol:'admin',      pin:'', activo:true, act:Util.now()},
@@ -3694,6 +3694,84 @@ const UI = {
     return close;
   },
   closeAll(){ this._stack.slice().forEach(fn=>fn()); },
+
+  /** Pregunta antes de subir en uno la cantidad de algo que YA está en el
+      pedido. Un toque de más en una pantalla táctil no puede cambiar la
+      cuenta en silencio. El marcador #repBox hace de cerrojo: mientras el
+      diálogo está abierto, otro toque sobre la misma tarjeta no abre un
+      segundo. Resuelve true solo si se confirma. */
+  /** Confirmación para subir la cantidad de un plato que ya está en el
+      pedido. Devuelve la cantidad TOTAL que debe quedar, o 0 si se cancela.
+      Trae un contador para poder poner varios de una vez, en lugar de
+      confirmar uno por uno. */
+  repetir(o){
+    if (document.getElementById('repBox')) return Promise.resolve(0);
+    const qty = Math.max(1, Number(o.qty)||1);
+    const unit = Math.max(0, Number(o.unit)||0);
+    const max = Number(o.max);
+    const tope = (isFinite(max) && max > 0) ? qty + max : 9999;
+    let destino = Math.min(tope, qty + 1);
+    return new Promise(res => {
+      let resuelto = false;
+      const fin = (v) => { if (resuelto) return; resuelto = true; res(v); };
+      const cerrar = this.modal({
+        title:'¿Agregar otro?', size:'sm',
+        body:'<div id="repBox" class="col" style="gap:12px;text-align:center">' +
+          '<div style="font-family:var(--serif);font-size:21px;line-height:1.25">' + Util.esc(o.nombre||'') + '</div>' +
+          (o.detalle ? '<div class="dim" style="font-size:12.5px;margin-top:-6px">' + Util.esc(o.detalle) + '</div>' : '') +
+          '<div class="row" style="justify-content:center;align-items:center;gap:16px">' +
+            '<div><div class="eyebrow">Ahora</div>' +
+              '<div class="num" style="font-size:30px;font-weight:700">' + qty + '</div></div>' +
+            '<span style="font-size:22px;color:var(--ash-dim)">&rarr;</span>' +
+            '<div><div class="eyebrow" style="color:var(--brass-hi)">Quedaría</div>' +
+              '<div class="row" style="justify-content:center;align-items:center;gap:10px">' +
+                '<button type="button" class="btn icon" id="repMenos" ' +
+                  'style="width:38px;height:38px;font-size:20px;line-height:1">−</button>' +
+                '<span class="num" id="repVal" style="font-size:30px;font-weight:700;color:var(--brass-hi);min-width:44px">' +
+                  destino + '</span>' +
+                '<button type="button" class="btn icon" id="repMas" ' +
+                  'style="width:38px;height:38px;font-size:20px;line-height:1">+</button>' +
+              '</div></div>' +
+          '</div>' +
+          (unit ? '<div style="padding:9px 12px;border-radius:var(--r);background:var(--char-900)">' +
+            '<div class="row" style="justify-content:space-between"><span class="dim" style="font-size:12px">Esta línea pasa de</span>' +
+            '<b class="num" style="font-size:13px" id="repImp">' + Util.money(unit*qty) + ' a ' + Util.money(unit*destino) + '</b></div></div>' : '') +
+          '<p class="dim" style="font-size:11.5px;line-height:1.5;margin:0">Ese plato ya está en el pedido. ' +
+            'Confirma solo si el cliente pidió otro igual.</p>' +
+          '<p class="dim" id="repTope" style="font-size:11.5px;margin:0;color:var(--ember-hi);display:none"></p>' +
+        '</div>',
+        footer:'<button class="btn" id="repNo" style="min-width:132px;padding:12px">No, dejar en ' + qty + '</button>' +
+               '<button class="btn pri" id="repSi" style="min-width:132px;padding:12px">Sí, agregar</button>',
+        onMount(ov, close){
+          const val = ov.querySelector('#repVal');
+          const imp = ov.querySelector('#repImp');
+          const avisoTope = ov.querySelector('#repTope');
+          const pinta = () => {
+            val.textContent = destino;
+            if (imp) imp.textContent = Util.money(unit*qty) + ' a ' + Util.money(unit*destino);
+            if (avisoTope){
+              const enTope = destino >= tope && tope < 9999;
+              avisoTope.style.display = enTope ? '' : 'none';
+              if (enTope) avisoTope.textContent = 'Es lo máximo que alcanza con el inventario disponible.';
+            }
+          };
+          const mover = (d) => { destino = Math.min(tope, Math.max(qty + 1, destino + d)); pinta(); };
+          const bm = ov.querySelector('#repMenos'); if (bm) bm.onclick = () => mover(-1);
+          const bp = ov.querySelector('#repMas');  if (bp) bp.onclick = () => mover(1);
+          /* Cerrar por la X, por el fondo o con Escape cuenta como "no". */
+          ov.addEventListener('click', e => {
+            if (e.target === ov || e.target.closest('[data-close]')) fin(0);
+          });
+          const no = ov.querySelector('#repNo');
+          if (no) no.onclick = () => { fin(0); close(); };
+          const si = ov.querySelector('#repSi');
+          if (si) si.onclick = () => { fin(destino); close(); };
+          pinta();
+        }
+      });
+      void cerrar;
+    });
+  },
   confirm(msg, opts){
     opts = opts || {};
     return new Promise(res => {
@@ -4601,12 +4679,64 @@ const POS = {
     // Dos bandejas iguales solo se agrupan si llevan la misma carne y la misma nota
     const ex = this.cart.find(i => i.pid === pid && !i.nota && !nota &&
       (i.carne === undefined || i.carne === insumo));
-    if (ex) ex.qty++;
-    else this.cart.push({lid:Util.uid('l'), pid, nombre:p.nombre, precio,
+    if (ex){
+      /* MEJORA (cantidades duplicadas): repetir un plato que YA está en el
+         pedido no puede ser un gesto invisible. En una pantalla táctil un
+         toque de más — o el mismo toque contado dos veces — subía la
+         cantidad sin que nadie lo notara, y la mesa terminaba con platos
+         que nadie pidió. Ahora se pregunta, diciendo en cuánto está y en
+         cuánto quedaría. Se puede desactivar en Configuración. */
+      if (DB.d.config.confirmarRepetir === false){
+        ex.qty++;
+        this.paint(); this.mostrarCarrito();
+        return;
+      }
+      return this.confirmarRepetir(ex);
+    }
+    this.cart.push({lid:Util.uid('l'), pid, nombre:p.nombre, precio,
       gramos:cantidad, qty:1, nota, adiciones: [], carne:insumo || null,
       carneNombre: insumo ? DB.rotulo(DB.meat(insumo)) : ''});
     this.paint();
     this.mostrarCarrito();
+  },
+
+  /** Pregunta antes de subir la cantidad de un plato que ya está en el pedido.
+      Sirve tanto para volver a tocar el plato en la carta como para el botón
+      "+" del carrito: ese botón subía la cantidad en silencio y sin tope, y
+      era por donde se colaban la mayoría de las cantidades duplicadas. */
+  async confirmarRepetir(linea){
+    const adTotal = (linea.adiciones||[]).reduce((s,x)=>s+(Number(x.precio)||0),0);
+    const unit = (Number(linea.precio)||0) + adTotal;
+    const qty = Number(linea.qty)||1;
+    /* Cuántas porciones más permite el inventario, para no ofrecer de más. */
+    let margen = Infinity;
+    if (linea.carne){
+      const porcion = Number(linea.gramos)||1;
+      margen = porcion > 0 ? Math.floor(DB.available(linea.carne) / porcion) : Infinity;
+      if (margen < 1){
+        const m = DB.meat(linea.carne);
+        return UI.toast('No alcanza el inventario de ' + ((m||{}).nombre||'ese insumo') +
+          ' para una porción más.','bad', 4200);
+      }
+    }
+    const destino = await UI.repetir({nombre:linea.nombre, detalle:linea.carneNombre,
+      unit, qty, max:margen});
+    if (!destino || destino <= qty) return;
+    const viva = this.cart.find(x => x.lid === linea.lid);
+    if (!viva) return UI.toast('Ese plato ya no está en el pedido.','warn');
+    const suma = destino - (Number(viva.qty)||1);
+    if (suma <= 0) return;
+    if (viva.carne){
+      const porcion = Number(viva.gramos)||1;
+      if (DB.available(viva.carne) < porcion * suma){
+        const m = DB.meat(viva.carne);
+        return UI.toast('No alcanza el inventario de ' + ((m||{}).nombre||'ese insumo') +
+          ' para ' + suma + ' porción(es) más.','bad', 4200);
+      }
+    }
+    viva.qty = destino;
+    this.paint(); this.mostrarCarrito();
+    UI.toast(viva.nombre + ' · ahora van ' + viva.qty + '.','ok');
   },
 
   /** En pantallas pequeñas el carrito es una hoja que se abre desde el botón
@@ -4769,6 +4899,9 @@ const POS = {
       const p = DB.product(it.pid);
       if (p && p.carne && DB.available(p.carne) < p.gramos)
         return UI.toast('Inventario insuficiente para una porción más.','warn');
+      /* El "+" del carrito también pregunta: es el mismo gesto de repetir
+         un plato, y en pantalla táctil es el más fácil de tocar de más. */
+      if (DB.d.config.confirmarRepetir !== false) return this.confirmarRepetir(it);
     }
     it.qty += d;
     if (it.qty <= 0) this.cart = this.cart.filter(i=>i.lid!==lid);
@@ -6797,13 +6930,28 @@ Views.domicilios = {
           });
         };
 
+        /* Subir la cantidad de un plato del domicilio pasa por la misma
+           confirmación que en Vender: el "+" subía en silencio y sin tope. */
+        const subirCantidad = (it) => {
+          if (!it) return;
+          if (DB.d.config.confirmarRepetir === false){ it.qty++; refrescar(); return; }
+          const adEx = (it.adiciones||[]).reduce((a,x)=>a+(Number(x.precio)||0),0);
+          const antes = Number(it.qty)||1;
+          UI.repetir({nombre:it.nombre, detalle:it.carneNombre,
+            unit:(Number(it.precio)||0)+adEx, qty:antes}).then(destino => {
+              if (!destino || destino <= antes) return;
+              it.qty = destino; refrescar();
+              UI.toast(it.nombre + ' · ahora van ' + it.qty + '.','ok');
+            });
+        };
+
         const enlazar = () => {
           ov.querySelectorAll('[data-dom-nota]').forEach(b => b.onclick = () => notaItem(parseInt(b.dataset.domNota)));
           ov.querySelectorAll('[data-dom-rm]').forEach(b => b.onclick = () => {
             bor.items.splice(parseInt(b.dataset.domRm),1); refrescar();
           });
           ov.querySelectorAll('[data-dom-inc]').forEach(b => b.onclick = () => {
-            bor.items[parseInt(b.dataset.domInc)].qty++; refrescar();
+            subirCantidad(bor.items[parseInt(b.dataset.domInc)]);
           });
           ov.querySelectorAll('[data-dom-dec]').forEach(b => b.onclick = () => {
             const idx = parseInt(b.dataset.domDec);
@@ -6815,8 +6963,12 @@ Views.domicilios = {
             const pid = b.dataset.domAdd;
             const p = DB.product(pid); if (!p) return;
             const ex = bor.items.find(i=>i.pid===pid && !(i.nota));
-            if (ex) ex.qty++;
-            else bor.items.push({
+            if (ex){
+              /* Misma regla que en Vender: repetir un plato se confirma. */
+              subirCantidad(ex);
+              return;
+            }
+            bor.items.push({
               pid:p.id, nombre:p.nombre, precio:Number(p.precio)||0,
               qty:1, gramos:p.gramos||0, nota:'', adiciones:[],
               carne:p.carne||null, carneNombre:'',
@@ -11039,14 +11191,25 @@ Views.cash = {
        del turno (t.gastosTotal, tomado de DB.d.gastos — efectivo +
        transferencia), no solo los egresos en efectivo de c.movs. */
     const egresos = t.gastosTotal || 0;
-    const totalCaja = t.total - egresos;
+    /* El cierre de la cajera no es contable, es de caja: de todo lo vendido
+       en el turno solo entrega en la mano el efectivo. Lo cobrado por
+       transferencia (Nequi, Daviplata, transferencia) entró al banco, y lo
+       cobrado por datáfono ni siquiera pasó por el cajón, así que ninguno
+       de los dos se liquida en efectivo. Se descuentan, igual que los
+       gastos, para llegar a la cifra que de verdad tiene que entregar.
+       Aritméticamente equivale a (efectivo de ventas − gastos), pero se
+       imprime paso a paso para que la cajera pueda seguir la cuenta. */
+    const otrosMedios = Math.max(0, Number(t.otrosMedios)||0);
+    const transferencias = Number(t.transferencias)||0;
+    const efectivoLiquidar = t.total - egresos - transferencias - otrosMedios;
 
     const linea = (label, valor, opts) => {
       opts = opts || {};
       return '<div style="display:flex;justify-content:space-between;gap:10px;margin:' + (opts.mt||'3px') + ' 0;' +
         (opts.grande ? 'font-size:14px;font-weight:800' : 'font-size:12px') +
         (opts.indent ? ';padding-left:12px;color:#333' : '') + '">' +
-        '<span>' + label + '</span><b style="font-family:var(--mono)">' + Util.money(valor) + '</b></div>';
+        '<span>' + label + '</span>' +
+        '<b style="font-family:var(--mono);white-space:nowrap">' + Util.money(valor) + '</b></div>';
     };
 
     const cuerpo =
@@ -11068,23 +11231,18 @@ Views.cash = {
       '<hr>' +
       '<div class="b" style="margin-top:2px">Ventas del turno (' + t.ventas.length + ' facturas)</div>' +
       linea('· Efectivo', t.efectivoVentas, {indent:true}) +
-      linea('· Transferencias', t.transferencias, {indent:true}) +
-      (t.otrosMedios ? linea('· Otros medios', t.otrosMedios, {indent:true}) : '') +
+      linea('· Transferencias', transferencias, {indent:true}) +
+      (otrosMedios ? linea('· Otros medios', otrosMedios, {indent:true}) : '') +
       linea('Total ventas', t.total, {grande:false, mt:'6px'}) +
       '<hr>' +
-      linea('(−) Gastos', -egresos) +
+      /* Lo que no se entrega en efectivo se descuenta a la vista. El signo
+         va en el rótulo y la cifra se imprime en positivo: "(−) Gastos
+         $ -50.000" era un doble negativo que se leía mal en el papel. */
+      linea('(−) Gastos', egresos) +
+      linea('(−) Transferencias', transferencias) +
+      (otrosMedios ? linea('(−) Otros medios', otrosMedios) : '') +
       '<hr>' +
-      /* INTERVENCIÓN: se aclara el rótulo y se agrega, aparte, el
-         efectivo realmente esperado en caja (con base + ingresos), para
-         que este total —que a propósito NO incluye base ni ingresos
-         manuales— no se confunda con el dinero físico que debe haber en
-         el cajón. Esa cifra completa la calcula igual "Cerrar Caja". */
-      linea('TOTAL FACTURADO (neto de gastos)', totalCaja, {grande:true, mt:'6px'}) +
-      '<hr>' +
-      '<div style="font-size:10px;margin-top:2px">Este total NO incluye la Base inicial ni Ingresos manuales.</div>' +
-      '<div style="font-size:11px;font-weight:700;margin-top:3px">Efectivo esperado en el cajón (con base): ' + Util.money(t.esperado) + '</div>' +
-      '<hr>' +
-      '<div class="c" style="font-size:10px;margin-top:4px">Resumen totalizado — no incluye el detalle<br>de cada transacción</div>' +
+      linea('TOTAL EFECTIVO A LIQUIDAR', efectivoLiquidar, {grande:true, mt:'6px'}) +
       '</div>';
 
     UI.modal({
@@ -11094,7 +11252,9 @@ Views.cash = {
         '<button class="btn gold" id="crt-print">' + Util.ico('print') + ' Imprimir resumen</button>',
       onMount(ov){
         ov.querySelector('#crt-print').onclick = () => {
-          DB.log('caja:resumen', titulo + ' · Total facturado neto ' + Util.money(totalCaja) + ' · Esperado con base ' + Util.money(t.esperado), c.id);
+          DB.log('caja:resumen', titulo + ' · Efectivo a liquidar ' + Util.money(efectivoLiquidar) +
+            ' · Transferencias ' + Util.money(transferencias) + ' · Gastos ' + Util.money(egresos) +
+            ' · Esperado con base ' + Util.money(t.esperado), c.id);
           const anchoOriginal = cfg.ticket;
           cfg.ticket = '80';
           UI.imprimir(ov);
@@ -12015,7 +12175,10 @@ Views.cfg = {
           {k:'moneda', label:'Moneda', val:c.moneda},
           {k:'simbolo', label:'Símbolo', val:c.simbolo},
           {k:'zona', label:'Zona horaria', val:c.zona},
-          {k:'impuestoIncluido', label:'El precio de la carta ya incluye impuesto', type:'check', val:c.impuestoIncluido, full:true}
+          {k:'impuestoIncluido', label:'El precio de la carta ya incluye impuesto', type:'check', val:c.impuestoIncluido, full:true},
+          {k:'confirmarRepetir', label:'Preguntar antes de repetir un plato que ya está en el pedido',
+           type:'check', val:c.confirmarRepetir !== false, full:true,
+           hint:'Evita que un toque de más suba la cantidad sin que nadie lo note'}
         ]) +
         bloque('Facturación e impresión', [
           {k:'prefijo', label:'Prefijo de factura', val:c.prefijo},
