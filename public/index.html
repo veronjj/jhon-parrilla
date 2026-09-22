@@ -11224,23 +11224,22 @@ Views.cash = {
       '<div>Apertura: ' + Util.dt(c.apertura) + '</div>' +
       (c.cierre ? '<div>Cierre: ' + Util.dt(c.cierre) + '</div>' : '') +
       '<div>Impreso: ' + Util.dt(Util.now()) + '</div>' +
+      '<div>Facturas del turno: ' + t.ventas.length + '</div>' +
       '<hr>' +
       /* INTERVENCIÓN: la Base inicial queda solo como referencia arriba
          (no se suma en el totalizado de abajo). */
       linea('Base inicial', c.base, {grande:false}) +
       '<hr>' +
-      '<div class="b" style="margin-top:2px">Ventas del turno (' + t.ventas.length + ' facturas)</div>' +
-      linea('· Efectivo', t.efectivoVentas, {indent:true}) +
-      linea('· Transferencias', transferencias, {indent:true}) +
-      (otrosMedios ? linea('· Otros medios', otrosMedios, {indent:true}) : '') +
-      linea('Total ventas', t.total, {grande:false, mt:'6px'}) +
-      '<hr>' +
-      /* Lo que no se entrega en efectivo se descuenta a la vista. El signo
-         va en el rótulo y la cifra se imprime en positivo: "(−) Gastos
-         $ -50.000" era un doble negativo que se leía mal en el papel. */
-      linea('(−) Gastos', egresos) +
-      linea('(−) Transferencias', transferencias) +
-      (otrosMedios ? linea('(−) Otros medios', otrosMedios) : '') +
+      /* Cinco renglones, sin desgloses anidados ni valores repetidos: la
+         cajera lee de arriba abajo cuánto se vendió, cómo entró la plata,
+         cuánto salió en gastos y cuánto entrega en efectivo. */
+      linea('Total de ventas', t.total) +
+      linea('Efectivo', t.efectivoVentas) +
+      linea('Transferencias', transferencias) +
+      /* Solo aparece si el turno tuvo cobros por datáfono; si no, no estorba.
+         Sin este renglón los números impresos no cuadrarían entre sí. */
+      (otrosMedios ? linea('Otros medios', otrosMedios) : '') +
+      linea('Gastos', egresos) +
       '<hr>' +
       linea('TOTAL EFECTIVO A LIQUIDAR', efectivoLiquidar, {grande:true, mt:'6px'}) +
       '</div>';
