@@ -4450,6 +4450,7 @@ Views.dash = {
     return '<button class="btn pri" data-act="ir-pos">' + Util.ico('pos') + '<span>Nueva venta</span></button>';
   },
   html(){
+    const esCajero = (Auth.user||{}).rol === 'cajero';
     const hoy = Util.today(), mes = Util.monthKey(hoy);
     const vHoy = DB.salesOf(hoy);
     const vMes = DB.paid().filter(s => Util.monthKey(s.fecha) === mes);
@@ -4467,8 +4468,9 @@ Views.dash = {
     const caja = DB.openCash();
 
     return '' +
-    '<div class="view-head"><div><div class="eyebrow">' + Util.date(hoy) + '</div>' +
-      '<h2>Hoy en la parrilla</h2></div>' +
+    '<div class="view-head"><div><div class="eyebrow">' + Util.date(hoy) +
+      (esCajero && caja ? ' · turno abierto ' + Util.time(caja.apertura) : '') + '</div>' +
+      '<h2>' + (esCajero ? 'Mi turno' : 'Hoy en la parrilla') + '</h2></div>' +
       '<div class="row right wrap">' +
         (caja ? '<span class="pill"><span class="dot on"></span>Caja abierta · base ' + Util.money(caja.base) + '</span>'
               : '<span class="pill"><span class="dot off"></span>Caja cerrada</span>') +
@@ -4480,6 +4482,11 @@ Views.dash = {
       '<div class="dim" style="font-size:12px">' + bajos.map(m=>Util.esc(m.nombre)+' · '+Util.cantIns(m.gramos, m)).join(' · ') + '</div></div>' +
       '<button class="btn sm right" data-act="ir-inv">Revisar inventario</button></div></div>' : '') +
 
+    /* El tablero del cajero es el de SU turno, no el del negocio. Las cifras
+       acumuladas del mes y la utilidad son lectura de administración; a quien
+       está en la caja lo que le sirve es cuánto lleva cobrado, en qué medio de
+       pago y cuánto tendrá que entregar al cerrar. */
+    (esCajero ? this.kpisTurno(caja) :
     '<div class="grid g-kpi" style="margin-bottom:14px">' +
       UI.kpi('Ventas de hoy', Util.money(tHoy.total), tHoy.n + ' tickets',
         {dir: delta>=0?'up':'dn', txt:(delta>=0?'▲ ':'▼ ') + Math.abs(delta) + '% vs ayer'}) +
@@ -4488,7 +4495,7 @@ Views.dash = {
       UI.kpi('Ticket promedio', Util.money(ticket), platosHoy + ' platos servidos hoy') +
       (tHoy.llevar ? UI.kpi('Para llevar', String(tHoy.llevar),
         Util.money(tHoy.dom) + ' cobrado en domicilios') : '') +
-    '</div>' +
+    '</div>') +
 
     '<div class="grid g-2" style="margin-bottom:14px">' +
       '<div class="card pad0"><div class="card-h"><h3>Ventas de los últimos 7 días</h3>' +
@@ -4576,10 +4583,33 @@ Views.dash = {
       '</div>';
     })();
   },
+  /** KPI del turno abierto: lo mismo que la cajera verá al liquidar. */
+  kpisTurno(caja){
+    if (!caja)
+      return '<div class="card" style="margin-bottom:14px;border-color:var(--brass-dim)">' +
+        '<div class="row"><span style="color:var(--brass-hi);display:flex">' + Util.ico('cash','ico-min') + '</span>' +
+        '<div><b style="font-size:13.5px">No hay un turno de caja abierto</b>' +
+        '<div class="dim" style="font-size:12px">Abre la caja para empezar a cobrar y ver aquí el avance de tu turno.</div></div>' +
+        (Auth.can('cash') ? '<button class="btn gold right" data-act="ir-caja">Ir a Caja</button>' : '') +
+        '</div></div>';
+    const t = Views.cash.totals(caja);
+    const gastos = t.gastosTotal || 0;
+    const liquidar = t.efectivoVentas - gastos;
+    const ticket = t.ventas.length ? t.total / t.ventas.length : 0;
+    return '<div class="grid g-kpi" style="margin-bottom:14px">' +
+      UI.kpi('Ventas de mi turno', Util.money(t.total), t.ventas.length + ' facturas · desde ' + Util.time(caja.apertura)) +
+      UI.kpi('Efectivo cobrado', Util.money(t.efectivoVentas), 'Lo que va entrando al cajón') +
+      UI.kpi('Transferencias', Util.money(t.transferencias), 'Nequi, Daviplata, transferencia') +
+      UI.kpi('Gastos del turno', Util.money(gastos), 'Salidas registradas en tu turno') +
+      UI.kpi('Efectivo a liquidar', Util.money(liquidar), 'Efectivo cobrado menos gastos') +
+      UI.kpi('Ticket promedio', Util.money(ticket), 'Base en caja ' + Util.money(caja.base)) +
+    '</div>';
+  },
   mount(){
     document.querySelectorAll('[data-act]').forEach(b => b.onclick = () => {
       const a = b.dataset.act;
       if (a === 'ir-pos') Router.go('pos');
+      if (a === 'ir-caja') Router.go('cash');
       if (a === 'ir-inv') Router.go('inv');
       if (a === 'ir-rep') Router.go('reports');
       if (a === 'ir-dom') Router.go('domicilios');
