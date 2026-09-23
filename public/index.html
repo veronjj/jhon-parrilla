@@ -4455,7 +4455,9 @@ Views.dash = {
     const vHoy = DB.salesOf(hoy);
     const vMes = DB.paid().filter(s => Util.monthKey(s.fecha) === mes);
     const ayer = Util.daysAgo(1).toISOString().slice(0,10);
+    const anteayer = Util.daysAgo(2).toISOString().slice(0,10);
     const tHoy = Metrics.totals(vHoy), tMes = Metrics.totals(vMes), tAyer = Metrics.totals(DB.salesOf(ayer));
+    const tAnteayer = Metrics.totals(DB.salesOf(anteayer));
     const util = tHoy.total - tHoy.imp - tHoy.prop - tHoy.dom - tHoy.costo;
     const delta = tAyer.total ? Math.round(((tHoy.total - tAyer.total)/tAyer.total)*100) : 0;
     const ticket = tHoy.n ? tHoy.total/tHoy.n : 0;
@@ -4464,6 +4466,33 @@ Views.dash = {
     const top = Metrics.topProducts(vMes, 6);
     const maxTop = Math.max(1, ...top.map(t=>t.qty));
     const pagos = Object.entries(Metrics.byPayment(vHoy)).sort((a,b)=>b[1]-a[1]);
+    /* Los medios de pago del día, abiertos por quien cobró: un donut con el
+       consolidado no deja ver de quién es cada peso a la hora de cuadrar. */
+    const porCajera = (() => {
+      const m = {};
+      vHoy.forEach(vt => {
+        const id = vt.userId || '_';
+        if (!m[id]) m[id] = {nombre:(DB.user(id)||{}).nombre || 'Sin identificar',
+                             efectivo:0, transferencias:0, otros:0, total:0, n:0};
+        const fila = m[id];
+        fila.n++;
+        fila.total += Number(vt.total)||0;
+        let cubierto = 0;
+        (vt.pagos||[]).forEach(pg => {
+          const monto = Number(pg.monto)||0;
+          cubierto += monto;
+          if (pg.metodo === 'Efectivo') fila.efectivo += monto;
+          else if (pg.metodo === 'Transferencia' || pg.metodo === 'Nequi' || pg.metodo === 'Daviplata')
+            fila.transferencias += monto;
+          else fila.otros += monto;
+        });
+        /* Una venta sin medio de pago anotado no puede desaparecer del cuadre. */
+        const resto = (Number(vt.total)||0) - cubierto;
+        if (resto > 0) fila.otros += resto;
+      });
+      return Object.values(m).sort((a,b)=>b.total-a.total);
+    })();
+    const hayOtros = porCajera.some(x => x.otros > 0);
 
     const caja = DB.openCash();
     /* Al cajero todo se le mide contra SU turno, así que los totales se
@@ -4486,11 +4515,6 @@ Views.dash = {
               : '<span class="pill"><span class="dot off"></span>Caja cerrada</span>') +
       '</div></div>' +
 
-    (bajos.length ? '<div class="card" style="border-color:var(--ember-dim);background:linear-gradient(90deg,rgba(163,35,28,.13),transparent);margin-bottom:14px">' +
-      '<div class="row"><span style="color:var(--ember-hi);display:flex">' + Util.ico('warn') + '</span>' +
-      '<div><b style="font-size:13.5px">' + bajos.length + ' ' + (bajos.length===1?'insumo':'insumos') + ' en nivel crítico</b>' +
-      '<div class="dim" style="font-size:12px">' + bajos.map(m=>Util.esc(m.nombre)+' · '+Util.cantIns(m.gramos, m)).join(' · ') + '</div></div>' +
-      '<button class="btn sm right" data-act="ir-inv">Revisar inventario</button></div></div>' : '') +
 
     /* El tablero del cajero es el de SU turno, no el del negocio. Las cifras
        acumuladas del mes y la utilidad son lectura de administración; a quien
@@ -4498,7 +4522,12 @@ Views.dash = {
        pago y cuánto tendrá que entregar al cerrar. */
     (esCajero ? this.kpisTurno(caja, tTurno) :
     '<div class="grid g-kpi" style="margin-bottom:14px">' +
-      UI.kpi('Ventas de hoy', Util.money(tHoy.total), tHoy.n + ' tickets',
+      /* El día suelto no dice mucho: debajo van los dos días anteriores para
+         comparar sin tener que bajar hasta la gráfica. */
+      UI.kpi('Ventas de hoy', Util.money(tHoy.total), tHoy.n + ' tickets' +
+        '<div style="margin-top:5px;font-family:var(--mono);font-size:10.5px;line-height:1.7;color:var(--ash-dim)">' +
+          'Ayer <b style="color:var(--ash)">' + Util.money(tAyer.total) + '</b> · ' + tAyer.n + ' tickets<br>' +
+          'Anteayer <b style="color:var(--ash)">' + Util.money(tAnteayer.total) + '</b> · ' + tAnteayer.n + ' tickets</div>',
         {dir: delta>=0?'up':'dn', txt:(delta>=0?'▲ ':'▼ ') + Math.abs(delta) + '% vs ayer'}) +
       UI.kpi('Ventas del mes', Util.money(tMes.total), tMes.n + ' tickets acumulados') +
       UI.kpi('Utilidad estimada hoy', Util.money(util), 'Neto de costo, impuesto y propina') +
@@ -4521,8 +4550,28 @@ Views.dash = {
               '<div style="padding:16px">' + (pagosTurno.length ? Chart.donut(pagosTurno)
                 : UI.empty('Sin cobros aún','Los cobros de tu turno aparecerán aquí.')) + '</div></div>'
             : '')
-        : '<div class="card pad0"><div class="card-h"><h3>Métodos de pago de hoy</h3></div>' +
-          '<div style="padding:16px">' + (pagos.length ? Chart.donut(pagos) : UI.empty('Sin cobros aún','Las ventas de hoy aparecerán aquí.')) + '</div></div>') +
+        : '<div class="card pad0"><div class="card-h"><h3>Métodos de pago por cajera · hoy</h3>' +
+          '<span class="dim right num" style="font-size:11px">' + Util.money(tHoy.total) + '</span></div>' +
+          (porCajera.length
+            ? UI.table([{t:'Cajera'},{t:'Efectivo',n:1},{t:'Transferencias',n:1}]
+                .concat(hayOtros ? [{t:'Otros',n:1}] : [])
+                .concat([{t:'Total',n:1}]),
+                porCajera.map(x =>
+                  '<tr><td><b>' + Util.esc(x.nombre) + '</b>' +
+                    '<div class="dim" style="font-size:11px">' + x.n + ' factura(s)</div></td>' +
+                  '<td class="n">' + Util.money(x.efectivo) + '</td>' +
+                  '<td class="n">' + Util.money(x.transferencias) + '</td>' +
+                  (hayOtros ? '<td class="n">' + Util.money(x.otros) + '</td>' : '') +
+                  '<td class="n"><b>' + Util.money(x.total) + '</b></td></tr>')
+                  .concat(porCajera.length > 1
+                    ? ['<tr><td><b>TOTAL</b></td>' +
+                        '<td class="n"><b>' + Util.money(porCajera.reduce((a,x)=>a+x.efectivo,0)) + '</b></td>' +
+                        '<td class="n"><b>' + Util.money(porCajera.reduce((a,x)=>a+x.transferencias,0)) + '</b></td>' +
+                        (hayOtros ? '<td class="n"><b>' + Util.money(porCajera.reduce((a,x)=>a+x.otros,0)) + '</b></td>' : '') +
+                        '<td class="n"><b>' + Util.money(tHoy.total) + '</b></td></tr>']
+                    : []))
+            : '<div style="padding:16px">' + UI.empty('Sin cobros aún','Las ventas de hoy aparecerán aquí.') + '</div>') +
+        '</div>') +
     '</div>' +
 
     (esCajero ? '' :
@@ -4533,7 +4582,9 @@ Views.dash = {
           UI.empty('Aún no hay ventas este mes','Vende para ver el ranking.')) + '</div></div>' +
       '<div class="card pad0"><div class="card-h"><h3>Inventario</h3>' +
         '<button class="btn sm right" data-act="ir-inv">Ver todo</button></div>' +
-        '<div style="padding:14px 16px" class="col">' + DB.meats().slice(0,5).map(m => {
+        '<div style="padding:14px 16px" class="col">' +
+          /* Solo carnes: son las que de verdad frenan el servicio si se acaban. */
+          DB.meats().filter(m => (m.tipo||'carne') === 'carne').slice(0,5).map(m => {
           const st = DB.stockState(m), pct = Math.min(100, Util.pct(m.gramos, Math.max(m.minimo*3, m.gramos)));
           return '<div class="scale"><div class="row"><span style="font-size:12.5px;font-weight:500">' + Util.esc(m.nombre) + '</span>' +
             '<span class="num right" style="font-size:12px;color:var(--ash)">' + Util.cantIns(m.gramos, m) + '</span></div>' +
