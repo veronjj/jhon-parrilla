@@ -11135,7 +11135,10 @@ Views.cash = {
       cur = '<div class="grid g-kpi" style="margin-bottom:14px">' +
           UI.kpi('Base inicial', Util.money(c.base), 'Abierta ' + Util.dt(c.apertura)) +
           UI.kpi('Ventas del turno', Util.money(t.total), t.ventas.length + ' facturas · Ef: ' + Util.money(t.efectivoVentas) + ' · Tr: ' + Util.money(t.transferencias)) +
-          UI.kpi('Total esperado', Util.money(t.esperado), 'Base + ventas + mov.') +
+          /* El KPI "Total esperado" se retiró: mezclaba base, ventas y
+             movimientos en una sola cifra que se confundía con lo que hay
+             que entregar. La referencia para contar sigue estando en el
+             arqueo de "Cerrar caja", que es donde se compara de verdad. */
         '</div>' +
         '<div class="grid g-2">' +
           '<div class="card pad0"><div class="card-h"><h3>Desglose por medio de pago</h3></div><div style="padding:16px">' +
@@ -11261,8 +11264,9 @@ Views.cash = {
       (t.otrosMedios ? '<div>· Otros medios<div class="r">' + Util.money(t.otrosMedios) + '</div></div>' : '') +
       '<div style="margin-top:4px">Ingresos manuales<div class="r">' + Util.money(t.ingresos) + '</div></div>' +
       '<div>Egresos / gastos<div class="r">' + Util.money(t.egresos) + '</div></div>' +
-      '<hr>' +
-      '<div class="b" style="font-size:13px">TOTAL ESPERADO EN CAJA<div class="r" style="font-size:15px">' + Util.money(t.esperado) + '</div></div>' +
+      /* Sin "TOTAL ESPERADO EN CAJA": este tiquete es el detalle de los
+         movimientos del turno, y esa cifra se leía como si fuera lo que hay
+         que entregar. El cuadre del dinero se hace en el arqueo de cierre. */
       '<hr>' +
       '<div class="c" style="font-size:10px">Documento interno de control de caja</div>' +
       '</div>';
