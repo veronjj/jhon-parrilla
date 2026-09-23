@@ -8065,23 +8065,54 @@ const Ticket = {
   /** Comanda de cocina: papel grande, con adiciones detalladas y precio para despacho. */
   comanda(orderId, ronda){
     const o = DB.order(orderId); if (!o) return;
-    /* Si se pide una ronda que no tiene platos (por ejemplo al reimprimir),
-       se imprime la comanda completa en vez de un tiquete vacío. */
-    let items = o.items.filter(i => !ronda || i.ronda === ronda);
-    if (!items.length){ items = o.items.slice(); ronda = null; }
+    /* La comanda es UN SOLO documento por mesa: imprime la cuenta completa
+       (todas las rondas) con un único total, y marca aparte lo que la cocina
+       debe preparar en esta ronda. Antes traía el total de la ronda, el
+       acumulado de la mesa y una nota de "NO COBRAR": tres cifras y una
+       advertencia para decidir qué cobrar. Ahora hay un solo número. */
+    const todos = o.items || [];
+    const rondaNum = Number(ronda) || 0;
+    let nuevos = rondaNum ? todos.filter(i => (i.ronda||1) === rondaNum) : [];
+    if (!nuevos.length) nuevos = todos.slice();
+    const previos = todos.filter(i => nuevos.indexOf(i) === -1);
     const llevar = o.tipo && o.tipo !== 'mesa';
-    /* Total de adiciones por ítem */
-    const adTotalItem = (i) => (i.adiciones||[]).reduce((s,a)=>s+a.precio,0);
-    /* Subtotal de la comanda (esta ronda) */
-    const subtotalRonda = items.reduce((s,i)=>(s + (i.precio + adTotalItem(i))*i.qty),0);
-    /* CORRECCIÓN: este tiquete es de cocina y, en una ronda posterior, su
-       total es solo el de esa ronda. Impreso a secas como "TOTAL", se
-       confundía con la cuenta de la mesa y se cobraba de menos. Cuando la
-       mesa ya trae rondas anteriores se dice explícitamente de qué ronda es
-       el total y cuánto lleva acumulado la mesa. */
-    const hayAnteriores = items.length !== (o.items||[]).length;
+    const adTotalItem = (i) => (i.adiciones||[]).reduce((s,a)=>s+(Number(a.precio)||0),0);
+    const lineaTotal = (i) => (Number(i.precio||0) + adTotalItem(i)) * (Number(i.qty)||1);
     const cargoDom = llevar ? (Number(o.domicilio)||0) : 0;
     const totalMesa = Orders.total(o) + cargoDom;
+
+    /* Ficha completa para cocina: carne, porción, nota y adiciones. */
+    const fichaCocina = (i) => {
+      const adiciones = i.adiciones||[];
+      const adTotal = adTotalItem(i);
+      return '<div class="tk-item"><div class="b tk-item-nm">' + i.qty + ' × ' + Util.esc(i.nombre) + '</div>' +
+        (i.carneNombre ? '<div class="tk-item-carne">&gt; ' + Util.esc(i.carneNombre.toUpperCase()) + '</div>' : '') +
+        (i.gramos ? '<div class="tk-item-porc">' + Util.cantIns(i.gramos*i.qty, DB.meat(i.carne)) + '</div>' : '') +
+        (i.nota ? '<div class="tk-item-nota">&gt;&gt; ' + Util.esc(i.nota.toUpperCase()) + '</div>' : '') +
+        (adiciones.length
+          ? '<div style="margin:2px 0 1px;font-size:10px;font-weight:700;letter-spacing:.06em">ADICIONES:</div>' +
+            adiciones.map(a =>
+              '<div class="tk-item-ad" style="display:table;width:100%">' +
+                '<span style="display:table-cell">[+] ' + Util.esc(a.nombre.toUpperCase()) + '</span>' +
+                (a.precio > 0
+                  ? '<span style="display:table-cell;text-align:right;font-weight:700">+ $' + Util.money(a.precio,false) + '</span>'
+                  : '<span style="display:table-cell;text-align:right;font-style:italic">sin cargo</span>') +
+              '</div>'
+            ).join('')
+          : '') +
+        '<div class="tk-item-p">$ ' + Util.money(lineaTotal(i), false) +
+          (adTotal>0 ? '<br><span style="font-size:9px;font-weight:400">(incluye adiciones $'+Util.money(adTotal,false)+')</span>' : '') +
+        '</div></div>';
+    };
+    /* Lo de rondas anteriores ya se cocinó: va en una línea, solo para que la
+       suma de la cuenta se pueda seguir con el dedo. */
+    const lineaBreve = (i) =>
+      '<div style="display:table;width:100%;margin:2px 0;font-size:11.5px">' +
+        '<span style="display:table-cell">' + i.qty + ' × ' + Util.esc(i.nombre) +
+          (i.carneNombre ? ' (' + Util.esc(i.carneNombre) + ')' : '') + '</span>' +
+        '<span style="display:table-cell;text-align:right;white-space:nowrap">$ ' +
+          Util.money(lineaTotal(i), false) + '</span></div>';
+
     const cuerpo = '<div class="ticket">' +
       (Ticket.logoImp() ? '<div class="c"><img src="' + Ticket.logoImp() +
         '" style="max-width:45%;height:auto;margin-bottom:3px;background:#fff"></div>' : '') +
@@ -8089,52 +8120,28 @@ const Ticket = {
       (llevar ? '<div class="c b tk-llevar">** ' + POS.TIPOS[o.tipo].corto.toUpperCase() + ' **</div>' : '') +
       '<div class="c b tk-mesa">' +
         (llevar ? Util.esc(o.mesa || POS.TIPOS[o.tipo].corto) : 'MESA ' + Util.esc(o.mesa)) + '</div>' +
-      '<div class="c tk-sub">' + Util.esc(o.numero) + (ronda>1 ? ' · RONDA ' + ronda : ' · RONDA 1') + '</div>' +
+      '<div class="c tk-sub">' + Util.esc(o.numero) + '</div>' +
       '<div class="c tk-sub">' + Util.time(Util.now()) + ' · ' + Util.esc((DB.user(o.meseroId)||{}).nombre||'Sistema') + '</div>' +
-      '<div class="c tk-sub">Ítems: ' + items.reduce((a,i)=>a+i.qty,0) +
-        ' · ' + (hayAnteriores ? 'Esta ronda' : 'Total') + ': $' + Util.money(subtotalRonda,false) + '</div><hr>' +
-      items.map(i => {
-        const adiciones = i.adiciones||[];
-        const adTotal = adTotalItem(i);
-        return '<div class="tk-item"><div class="b tk-item-nm">' + i.qty + ' × ' + Util.esc(i.nombre) + '</div>' +
-          (i.carneNombre ? '<div class="tk-item-carne">&gt; ' + Util.esc(i.carneNombre.toUpperCase()) + '</div>' : '') +
-          (i.gramos ? '<div class="tk-item-porc">' + Util.cantIns(i.gramos*i.qty, DB.meat(i.carne)) + '</div>' : '') +
-          (i.nota ? '<div class="tk-item-nota">&gt;&gt; ' + Util.esc(i.nota.toUpperCase()) + '</div>' : '') +
-          (adiciones.length
-            ? '<div style="margin:2px 0 1px;font-size:10px;font-weight:700;letter-spacing:.06em">ADICIONES:</div>' +
-              adiciones.map(a =>
-                '<div class="tk-item-ad" style="display:table;width:100%">' +
-                  '<span style="display:table-cell">[+] ' + Util.esc(a.nombre.toUpperCase()) + '</span>' +
-                  (a.precio > 0
-                    ? '<span style="display:table-cell;text-align:right;font-weight:700">+ $' + Util.money(a.precio,false) + '</span>'
-                    : '<span style="display:table-cell;text-align:right;font-style:italic">sin cargo</span>') +
-                '</div>'
-              ).join('')
-            : '') +
-          '<div class="tk-item-p">$ ' + Util.money((i.precio + adTotal)*i.qty, false) +
-            (adTotal>0 ? '<br><span style="font-size:9px;font-weight:400">(incluye adiciones $'+Util.money(adTotal,false)+')</span>' : '') +
-          '</div>' +
-          '</div>';
-      }).join('') +
+      '<div class="c tk-sub">Platos en la mesa: ' + todos.reduce((a,i)=>a+(Number(i.qty)||1),0) + '</div><hr>' +
+      (previos.length
+        ? '<div class="c b" style="font-size:11px;letter-spacing:.08em">PREPARAR AHORA' +
+            (rondaNum > 1 ? ' · RONDA ' + rondaNum : '') + '</div>'
+        : '') +
+      nuevos.map(fichaCocina).join('') +
+      (previos.length
+        ? '<hr><div class="c b" style="font-size:11px;letter-spacing:.08em">YA ENVIADO ANTES</div>' +
+          previos.map(lineaBreve).join('')
+        : '') +
       (o.nota ? '<hr><div class="tk-sub"><b>Nota:</b> ' + Util.esc(o.nota) + '</div>' : '') +
       (llevar && o.entrega && (o.entrega.direccion || o.entrega.telefono)
         ? '<hr><div class="tk-sub"><b>Entrega:</b> ' + Util.esc(o.entrega.direccion||'') +
           (o.entrega.telefono ? '<br>Tel: ' + Util.esc(o.entrega.telefono) : '') + '</div>' : '') +
-      (llevar && o.domicilio ? '<div class="tk-sub"><b>Domicilio:</b> ' + Util.money(o.domicilio) + '</div>' : '') +
-      /* INTERVENCIÓN: total general de la comanda impresa, sumando todos
-         los productos (más domicilio si aplica), alineado a la derecha
-         en la parte inferior del ticket. */
+      (cargoDom ? '<div class="tk-sub"><b>Domicilio:</b> ' + Util.money(cargoDom) + '</div>' : '') +
+      /* Un único total: toda la mesa, todas las rondas. Es lo que se cobra. */
       '<hr><div class="tk-total-row">' +
-        '<span class="tk-total-lbl">' + (hayAnteriores ? 'TOTAL RONDA ' + (ronda||1) : 'TOTAL') + '</span>' +
-        '<span class="tk-total-val">' + Util.money(subtotalRonda + cargoDom) + '</span>' +
-      '</div>' +
-      (hayAnteriores
-        ? '<div class="tk-total-row"><span class="tk-total-lbl">ACUMULADO MESA</span>' +
-            '<span class="tk-total-val">' + Util.money(totalMesa) + '</span></div>' +
-          '<div class="c tk-sub" style="margin-top:4px">** NO COBRAR CON ESTE TIQUETE **<br>' +
-            'Es la comanda de cocina. La cuenta completa se cobra en caja.</div>'
-        : '') +
-      '</div>';
+        '<span class="tk-total-lbl">TOTAL A COBRAR</span>' +
+        '<span class="tk-total-val">' + Util.money(totalMesa) + '</span>' +
+      '</div></div>';
     /* INTERVENCIÓN: en tablet/móvil, junto al botón Imprimir se agrega un
        botón rojo en alto relieve "Editar Comanda" del mismo tamaño, para
        el caso de que el cliente pida algo más o la mesera se haya
