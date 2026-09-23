@@ -4464,8 +4464,18 @@ Views.dash = {
     const top = Metrics.topProducts(vMes, 6);
     const maxTop = Math.max(1, ...top.map(t=>t.qty));
     const pagos = Object.entries(Metrics.byPayment(vHoy)).sort((a,b)=>b[1]-a[1]);
-    const ultimas = DB.paid().slice(-8).reverse();
+
     const caja = DB.openCash();
+    /* Al cajero todo se le mide contra SU turno, así que los totales se
+       calculan una sola vez y alimentan tanto los KPI como el gráfico de
+       medios de pago: si el donut dijera "hoy" y los KPI "el turno", el
+       cuadre del cierre volvería a no coincidir. */
+    const tTurno = (esCajero && caja) ? Views.cash.totals(caja) : null;
+    const pagosTurno = tTurno ? Object.entries(Metrics.byPayment(tTurno.ventas)).sort((a,b)=>b[1]-a[1]) : [];
+    /* Para el cajero, las últimas ventas son las de SU turno: ver debajo de
+       "Ventas de mi turno" una factura de otro turno es justo lo que enturbia
+       el cuadre del cierre. */
+    const ultimas = (tTurno ? tTurno.ventas : DB.paid()).slice(-8).reverse();
 
     return '' +
     '<div class="view-head"><div><div class="eyebrow">' + Util.date(hoy) +
@@ -4486,7 +4496,7 @@ Views.dash = {
        acumuladas del mes y la utilidad son lectura de administración; a quien
        está en la caja lo que le sirve es cuánto lleva cobrado, en qué medio de
        pago y cuánto tendrá que entregar al cerrar. */
-    (esCajero ? this.kpisTurno(caja) :
+    (esCajero ? this.kpisTurno(caja, tTurno) :
     '<div class="grid g-kpi" style="margin-bottom:14px">' +
       UI.kpi('Ventas de hoy', Util.money(tHoy.total), tHoy.n + ' tickets',
         {dir: delta>=0?'up':'dn', txt:(delta>=0?'▲ ':'▼ ') + Math.abs(delta) + '% vs ayer'}) +
@@ -4498,13 +4508,24 @@ Views.dash = {
     '</div>') +
 
     '<div class="grid g-2" style="margin-bottom:14px">' +
-      '<div class="card pad0"><div class="card-h"><h3>Ventas de los últimos 7 días</h3>' +
+      /* Al cajero no le sirven las series del negocio (7 días, mes): esa es
+         lectura de administración. Solo ve cómo entró la plata de su turno. */
+      (esCajero ? '' :
+        '<div class="card pad0"><div class="card-h"><h3>Ventas de los últimos 7 días</h3>' +
         '<span class="dim right num" style="font-size:11px">' + Util.money(Metrics.byDay(7).reduce((a,d)=>a+d.total,0)) + '</span></div>' +
-        '<div style="padding:14px 16px">' + Chart.bars(Metrics.byDay(7)) + '</div></div>' +
-      '<div class="card pad0"><div class="card-h"><h3>Métodos de pago de hoy</h3></div>' +
-        '<div style="padding:16px">' + (pagos.length ? Chart.donut(pagos) : UI.empty('Sin cobros aún','Las ventas de hoy aparecerán aquí.')) + '</div></div>' +
+        '<div style="padding:14px 16px">' + Chart.bars(Metrics.byDay(7)) + '</div></div>') +
+      (esCajero
+        ? (caja
+            ? '<div class="card pad0"><div class="card-h"><h3>Métodos de pago de mi turno</h3>' +
+              '<span class="dim right num" style="font-size:11px">' + Util.money(tTurno.total) + '</span></div>' +
+              '<div style="padding:16px">' + (pagosTurno.length ? Chart.donut(pagosTurno)
+                : UI.empty('Sin cobros aún','Los cobros de tu turno aparecerán aquí.')) + '</div></div>'
+            : '')
+        : '<div class="card pad0"><div class="card-h"><h3>Métodos de pago de hoy</h3></div>' +
+          '<div style="padding:16px">' + (pagos.length ? Chart.donut(pagos) : UI.empty('Sin cobros aún','Las ventas de hoy aparecerán aquí.')) + '</div></div>') +
     '</div>' +
 
+    (esCajero ? '' :
     '<div class="grid g-2" style="margin-bottom:14px">' +
       '<div class="card pad0"><div class="card-h"><h3>Más vendidos del mes</h3><span class="dim right" style="font-size:11px">porciones</span></div>' +
         '<div style="padding:10px 16px 16px">' + (top.length ?
@@ -4518,16 +4539,21 @@ Views.dash = {
             '<span class="num right" style="font-size:12px;color:var(--ash)">' + Util.cantIns(m.gramos, m) + '</span></div>' +
             '<div class="bar ' + st + '"><i style="width:' + pct + '%"></i></div></div>';
         }).join('') + '</div></div>' +
-    '</div>' +
+    '</div>') +
 
     '<div class="grid g-2">' +
-      '<div class="card pad0"><div class="card-h"><h3>Últimas ventas</h3>' +
+      '<div class="card pad0"><div class="card-h"><h3>' +
+        (esCajero && caja ? 'Últimas ventas de mi turno' : 'Últimas ventas') + '</h3>' +
+        (esCajero && caja ? '<span class="dim right num" style="font-size:11px">' +
+          tTurno.ventas.length + ' facturas</span>' : '') +
         '<button class="btn sm right" data-act="ir-rep">Reportes</button></div>' +
         UI.table([{t:'Factura'},{t:'Hora'},{t:'Atendió'},{t:'Total',n:1}],
           ultimas.map(s => '<tr data-sale="' + s.id + '" style="cursor:pointer"><td class="num">' + Util.esc(s.numero) + '</td>' +
             '<td>' + Util.time(s.fecha) + '</td><td>' + Util.esc((DB.user(s.userId)||{}).nombre || '—') + '</td>' +
             '<td class="n">' + Util.money(s.total) + '</td></tr>'),
-          {emptyTitle:'Sin ventas registradas', emptyMsg:'Abre la caja y registra la primera venta del día.'}) +
+          {emptyTitle:'Sin ventas registradas',
+           emptyMsg: esCajero && caja ? 'Las ventas que cobres en este turno aparecerán aquí.'
+                                      : 'Abre la caja y registra la primera venta del día.'}) +
       '</div>' +
     '</div>' +
 
@@ -4584,7 +4610,7 @@ Views.dash = {
     })();
   },
   /** KPI del turno abierto: lo mismo que la cajera verá al liquidar. */
-  kpisTurno(caja){
+  kpisTurno(caja, tt){
     if (!caja)
       return '<div class="card" style="margin-bottom:14px;border-color:var(--brass-dim)">' +
         '<div class="row"><span style="color:var(--brass-hi);display:flex">' + Util.ico('cash','ico-min') + '</span>' +
@@ -4592,7 +4618,7 @@ Views.dash = {
         '<div class="dim" style="font-size:12px">Abre la caja para empezar a cobrar y ver aquí el avance de tu turno.</div></div>' +
         (Auth.can('cash') ? '<button class="btn gold right" data-act="ir-caja">Ir a Caja</button>' : '') +
         '</div></div>';
-    const t = Views.cash.totals(caja);
+    const t = tt || Views.cash.totals(caja);
     const gastos = t.gastosTotal || 0;
     const liquidar = t.efectivoVentas - gastos;
     const ticket = t.ventas.length ? t.total / t.ventas.length : 0;
