@@ -5671,6 +5671,8 @@ const POS = {
     this.tipo = 'mesa'; this.domicilio = 0;
     this.entrega = {direccion:'', telefono:'', quien:'mensajero'};
     this._mostrado = false;
+    /* 'nuevo' | 'agregar' (otra ronda) | 'editar' (corregir la comanda) | 'cobrar' */
+    this.modo = 'nuevo';
   },
   /** Elige a dónde va el pedido y, si sale del local, cuánto se cobra por llevarlo. */
   pedirTipo(despues){
@@ -5805,6 +5807,40 @@ const POS = {
        mesa quedaría con los platos duplicados y cobrando de más. */
     const yaEnComanda = o ? new Set((o.items||[]).map(i=>i.lid).filter(Boolean)) : new Set();
     const porEnviar = this.cart.filter(i => !i.lid || !yaEnComanda.has(i.lid));
+    /* Corregir una comanda es dejarla EXACTAMENTE como quedó el carrito: lo
+       que se quitó desaparece y lo que se agregó entra como ronda nueva. Sin
+       esto, "Editar Comanda" solo sabía sumar y la mesa nunca podía bajar. */
+    if (o && this.modo === 'editar'){
+      const previos = new Map((o.items||[]).map(i => [i.lid, i]));
+      o.items = this.cart.map(i => {
+        const ya = i.lid ? previos.get(i.lid) : null;
+        const ad = (i.adiciones||[]).reduce((a,x)=>a+(Number(x.precio)||0),0);
+        return {lid:i.lid || Util.uid('l'), pid:i.pid, nombre:i.nombre, precio:i.precio,
+          qty:i.qty, gramos:i.gramos, nota:i.nota||'', adiciones:i.adiciones||[],
+          total:((Number(i.precio)||0) + ad) * (Number(i.qty)||1),
+          carne: i.carne !== undefined ? i.carne : ((DB.product(i.pid)||{}).carne||null),
+          carneNombre: i.carneNombre || '',
+          ronda: ya ? (ya.ronda||1) : ronda,
+          st: ya ? (ya.st||'pendiente') : 'pendiente'};
+      });
+      if (o.estado === 'listo' || o.estado === 'entregado') o.estado = 'pendiente';
+      if (this.esLlevar()){
+        o.tipo = this.tipo;
+        o.domicilio = Number(this.domicilio)||0;
+        o.entrega = Object.assign({}, this.entrega);
+      }
+      o.act = Util.now();
+      DB.touch('orders','config');
+      DB.log('comanda:corregir', o.numero + ' · ' + o.items.length + ' líneas · total ' +
+        Util.money(Orders.total(o)), o.id);
+      Sync.enqueue('orders','update', o);
+      const idE = o.id, rondaE = ronda;
+      this.reset();
+      Router.render();
+      UI.toast('Comanda ' + o.numero + ' corregida.','ok', 3600);
+      setTimeout(()=>Ticket.comanda(idE, rondaE), 350);
+      return;
+    }
     if (o && !porEnviar.length){
       UI.toast('Esos platos ya están en la comanda ' + o.numero + '. No se envió nada repetido.','info', 4600);
       return;
@@ -5886,20 +5922,34 @@ const POS = {
     if (q && window.innerWidth > 1024) q.focus();
   },
   /** Carga una comanda abierta en el carrito, para agregarle platos o para cobrarla. */
-  loadOrder(id, paraCobrar){
+  /** Abre una comanda existente. modo: true|'cobrar' (cuenta completa y cobra),
+      'editar' (corregir lo ya pedido) o nada (agregar una ronda nueva). */
+  loadOrder(id, modo){
     const o = DB.order(id); if (!o) return;
-    if (paraCobrar && !Auth.can('cobrar')) return UI.toast('La cuenta la cierra la caja.','warn');
+    const cobrar = (modo === true || modo === 'cobrar');
+    const editar = (modo === 'editar');
+    if (cobrar && !Auth.can('cobrar')) return UI.toast('La cuenta la cierra la caja.','warn');
     this.reset();
     this.orderId = o.id; this.mesa = o.mesa; this.clienteId = o.clienteId || 'cl_1';
     this.tipo = o.tipo || 'mesa';
     this.domicilio = Number(o.domicilio)||0;
     this.entrega = o.entrega ? Object.assign({}, o.entrega) : {direccion:'', telefono:'', quien:'mensajero'};
-    if (paraCobrar){
+    this.modo = cobrar ? 'cobrar' : (editar ? 'editar' : 'agregar');
+    if (cobrar || editar){
+      /* CORRECCIÓN DE RAÍZ: el lid de cada línea se CONSERVA. Es lo que
+         permite saber qué platos ya están en la comanda. "Editar Comanda"
+         los rehacía con lid nuevo, así que al reenviar a cocina la comanda
+         se quedaba con los platos viejos MÁS una copia de todos ellos: la
+         mesa quedaba con el doble de lo que el cliente pidió, y eso era lo
+         que después cobraba la caja. */
       this.cart = o.items.map(i => ({lid:i.lid || Util.uid('l'), pid:i.pid, nombre:i.nombre, precio:i.precio,
-        gramos:i.gramos, qty:i.qty, nota:i.nota||'', adiciones:Array.isArray(i.adiciones)?i.adiciones.map(a=>Object.assign({},a)):[], carne:i.carne, carneNombre:i.carneNombre||''}));
+        gramos:i.gramos, qty:i.qty, nota:i.nota||'',
+        adiciones:Array.isArray(i.adiciones)?i.adiciones.map(a=>Object.assign({},a)):[],
+        carne:i.carne, carneNombre:i.carneNombre||''}));
     }
     Router.go('pos');
-    if (paraCobrar) setTimeout(()=>POS.pay(), 120);
+    if (cobrar) setTimeout(()=>POS.pay(), 120);
+    else if (editar) UI.toast('Comanda ' + o.numero + ' abierta para corregir. Al enviar, la comanda queda como la dejes.','info', 5200);
     else UI.toast('Agregando a la comanda ' + o.numero + ' · mesa ' + o.mesa + '.','info');
   },
 
@@ -5910,6 +5960,19 @@ const POS = {
     if (!DB.openCash()) return UI.toast('Abre la caja antes de cobrar.','warn');
     /* Cobrar una comanda abierta es cobrarla completa: se suman primero los
        platos de las rondas anteriores que no estuvieran en el carrito. */
+    /* El cargo de domicilio y el tipo de pedido se releen de la COMANDA justo
+       antes de calcular. Si se quedaran en el estado de la pantalla, cualquier
+       cosa que lo hubiera tocado entre abrir la mesa y cobrar (otra pantalla,
+       un refresco, una sincronización) hacía que el domicilio se perdiera y la
+       cuenta saliera por debajo de lo que decía la comanda. */
+    if (this.orderId){
+      const oc = DB.order(this.orderId);
+      if (oc){
+        this.tipo = oc.tipo || this.tipo;
+        if (this.esLlevar()) this.domicilio = Number(oc.domicilio) || Number(this.domicilio) || 0;
+        if (oc.entrega) this.entrega = Object.assign({}, oc.entrega);
+      }
+    }
     const sumados = this.completarCuenta();
     if (sumados){
       this.paint();
@@ -7200,7 +7263,12 @@ Views.domicilios = {
             orden = {
               id:Util.uid('o'), saleId:venta.id, numero:'C'+String(seq).padStart(4,'0'),
               mesa:'DOM-'+(bor.telefono||'').slice(-4),
+              /* CORRECCIÓN DE RAÍZ: la comanda nacía sin el cargo de domicilio.
+                 El tiquete de cocina lo imprimía en cero y, si la caja cobraba
+                 ese pedido desde Comandas, el domicilio no entraba en la
+                 cuenta: la comanda decía un valor y el cobro otro. */
               tipo:'domicilio', entrega:venta.entrega,
+              domicilio:Number(venta.domicilio)||0,
               items:venta.items, estado:'pendiente',
               nota:bor.nota, fecha:venta.fecha, act:venta.fecha,
               meseroId:(Auth.user||{}).id, sync:false
@@ -7210,6 +7278,7 @@ Views.domicilios = {
             Sync.enqueue('orders','create',orden);
           } else if (orden.estado !== 'cobrada' && orden.estado !== 'cancelada') {
             orden.entrega = venta.entrega;
+            orden.domicilio = Number(venta.domicilio)||0;
             orden.items = venta.items;
             orden.nota = bor.nota;
             orden.act = Util.now();
@@ -8249,15 +8318,7 @@ const Ticket = {
              cobrar, reutilizando esa lógica tal cual (sin alterarla) para
              que la mesera vea y edite lo ya pedido; al enviarlo de nuevo
              a cocina se genera la nueva comanda con esos cambios. */
-          POS.loadOrder(o.id);
-          POS.cart = o.items.map(i => ({
-            lid:Util.uid('l'), pid:i.pid, nombre:i.nombre, precio:i.precio,
-            gramos:i.gramos, qty:i.qty, nota:i.nota||'',
-            adiciones:Array.isArray(i.adiciones)?i.adiciones.map(a=>Object.assign({},a)):[],
-            carne:i.carne, carneNombre:i.carneNombre||''
-          }));
-          POS.paint();
-          UI.toast('Comanda ' + o.numero + ' habilitada para editar.', 'info');
+          POS.loadOrder(o.id, 'editar');
         };
       }});
   },
