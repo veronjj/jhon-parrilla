@@ -1953,6 +1953,54 @@ const DB = {
     const h = Math.floor(min / 60), m2 = min % 60;
     return h ? (h + ' h ' + (m2 ? m2 + ' min' : '').trim()).trim() : (m2 + ' min');
   },
+  /* CORRECCIÓN DE RAÍZ (el inventario no cuadraba): el descuento vivía escrito
+     a mano dentro de POS.pay y NO existía en el cobro del módulo Domicilios, así
+     que todo lo vendido a domicilio salía del restaurante sin bajar del
+     inventario. Y al anular, sólo se devolvía la carne del plato: los insumos
+     adicionales (papa, arepa, lo que el plato lleve además) se quedaban
+     descontados para siempre. Ahora hay UNA sola rutina que todos usan, y la
+     venta queda marcada para que no se descuente dos veces. */
+  consumoDeVenta(v){
+    const consumo = {};
+    (v.items||[]).forEach(i => {
+      const qty = Number(i.qty)||1;
+      if (i.carne) consumo[i.carne] = (consumo[i.carne]||0) + (Number(i.gramos)||0)*qty;
+      const prod = this.product(i.pid);
+      if (prod && Array.isArray(prod.insumosExtra))
+        prod.insumosExtra.forEach(ie => {
+          if (ie && ie.id) consumo[ie.id] = (consumo[ie.id]||0) + (Number(ie.qty)||1)*qty;
+        });
+    });
+    return consumo;
+  },
+  /** Descuenta del inventario lo que consumió una venta. Una sola vez. */
+  descontarVenta(v){
+    if (!v || v.inventarioAplicado) return null;
+    const consumo = this.consumoDeVenta(v);
+    Object.entries(consumo).forEach(([mid, g]) => {
+      const m = this.meat(mid); if (!m) return;
+      m.gramos = Math.max(0, (Number(m.gramos)||0) - g); m.act = Util.now();
+      Sync.enqueue('meats','update', m);
+    });
+    v.inventarioAplicado = true;
+    this.touch('meats');
+    return consumo;
+  },
+  /** Devuelve al inventario lo de una venta anulada. */
+  devolverVenta(v){
+    /* Sólo se salta si consta que NUNCA se descontó. Las ventas viejas no
+       traen la marca y sí se habían descontado, así que se devuelven. */
+    if (!v || v.inventarioAplicado === false) return null;
+    const consumo = this.consumoDeVenta(v);
+    Object.entries(consumo).forEach(([mid, g]) => {
+      const m = this.meat(mid); if (!m) return;
+      m.gramos = (Number(m.gramos)||0) + g; m.act = Util.now();
+      Sync.enqueue('meats','update', m);
+    });
+    v.inventarioAplicado = false;
+    this.touch('meats');
+    return consumo;
+  },
   ABIERTAS:['pendiente','preparando','listo','entregado'],
   openOrders(){ return this.orders().filter(o => this.ABIERTAS.includes(o.estado)); },
   order(id){ return this.byId('orders').get(id); },
@@ -6160,22 +6208,9 @@ const POS = {
       if (turnoDom) venta.domTurnoId = turnoDom.id;
     }
 
-    // 1. Descuento de inventario en gramos, por corte
-    const consumo = {};
-    venta.items.forEach(i => { if (i.carne) consumo[i.carne] = (consumo[i.carne]||0) + i.gramos*i.qty; });
-    // 1b. Descuento de insumos adicionales (insumosExtra) por producto
-    venta.items.forEach(i => {
-      const prod = DB.product(i.pid);
-      if (prod && Array.isArray(prod.insumosExtra)){
-        prod.insumosExtra.forEach(ie => {
-          if (ie.id) consumo[ie.id] = (consumo[ie.id]||0) + (ie.qty||1)*i.qty;
-        });
-      }
-    });
-    Object.entries(consumo).forEach(([mid, g]) => {
-      const m = DB.meat(mid); if(!m) return;
-      m.gramos = Math.max(0, m.gramos - g); m.act = Util.now();
-    });
+    // 1. Inventario: carne del plato + insumos adicionales, en una sola rutina
+    const consumo = DB.descontarVenta(venta) || {};
+
     // 2. Cliente
     const cli = DB.client(this.clienteId);
     if (cli && !cli.sistema){
@@ -7359,6 +7394,10 @@ Views.domicilios = {
                 const turnoDom = Domicilios.turnoDeCobro(venta);
                 if (turnoDom) venta.domTurnoId = turnoDom.id;
                 const orden = guardarVenta(venta);
+                /* Un domicilio cobrado sale del restaurante igual que cualquier
+                   venta: tiene que bajar del inventario. Antes no lo hacía. */
+                DB.descontarVenta(venta);
+                Sync.enqueue('sales','update', venta);
                 if (orden){
                   orden.estado = 'cobrada';
                   orden.ventaId = venta.id; orden.numeroVenta = venta.numero;
@@ -8397,7 +8436,7 @@ const Sales = {
   void(id){
     const v = DB.d.sales.find(s=>s.id===id);
     if (!v || v.estado !== 'pagada') return;
-    v.items.forEach(i => { if (i.carne){ const m = DB.meat(i.carne); if (m){ m.gramos += i.gramos*i.qty; m.act = Util.now(); } } });
+    DB.devolverVenta(v);
     const cli = DB.client(v.clienteId);
     if (cli && !cli.sistema){ cli.visitas = Math.max(0, cli.visitas-1); cli.gastado = Math.max(0, cli.gastado - v.total); cli.act = Util.now(); }
     const caja = DB.openCash();
