@@ -2025,6 +2025,9 @@ const DB = {
     return this.paid().filter(s => {
       if (s.cajaId) return s.cajaId === c.id;
       if (s.domTurnoId) return false;
+      /* V2: una venta antigua de domicilio que ya cuenta en el turno de su
+         encargada (por ventana de tiempo) no se cuenta también en la caja. */
+      if (Domicilios.turnoLegacy(s)) return false;
       return s.fecha >= c.apertura && (!c.cierre || s.fecha <= c.cierre);
     });
   },
@@ -2438,6 +2441,26 @@ const Sync = {
   },
 
   /** Último-en-escribir-gana por `act`, con el id como clave estable. */
+  /** V3 (auditoría cruzada C1): un registro de dinero nunca retrocede en su
+      ciclo de vida por sincronización. Una factura pagada o anulada no vuelve a
+      "pendiente" porque otra tablet con datos viejos la guardó después, y una
+      comanda cobrada o cancelada no se reabre. Si llega esa regresión, se
+      rechaza y se reenvía la versión cerrada para que el servidor converja. */
+  rangoCiclo(entidad, r){
+    if (!r) return -1;
+    if (entidad === 'sales') return (r.anulada || r.estado === 'anulada') ? 2 : (r.estado === 'pagada' ? 1 : 0);
+    if (entidad === 'orders') return ['cobrada','cancelada','eliminada'].includes(r.estado) ? 1 : 0;
+    return 0;
+  },
+  retrocede(entidad, local, entrante){
+    if (entidad !== 'sales' && entidad !== 'orders') return false;
+    if (this.rangoCiclo(entidad, entrante) >= this.rangoCiclo(entidad, local)) return false;
+    local.act = Util.now();
+    this.enqueue(entidad, 'update', local);
+    DB.log('sync:regresion-rechazada', entidad + ' ' + (local.numero||local.id) + ' · se conservó "' +
+      (local.estado||'') + '" frente a "' + (entrante.estado||'') + '"', local.id);
+    return true;
+  },
   merge(cambio){
     const {entidad, data} = cambio;
     if (!data || !entidad) return;
@@ -2453,6 +2476,7 @@ const Sync = {
     if (!Array.isArray(col)) return;
     const i = col.findIndex(x => x.id === data.id);
     if (i < 0) col.push(data);
+    else if (this.retrocede(entidad, col[i], data)) return;
     else if (!col[i].act || (data.act||'') > col[i].act) col[i] = Object.assign({}, col[i], data);
     DB.touch(entidad);
   },
@@ -2537,6 +2561,7 @@ const Sync = {
          tablet mostrando los perfiles de la plantilla en vez de los del
          restaurante. */
       if (this.deFabrica(entidad, col[i])){ col[i] = r; n++; return; }
+      if (this.retrocede(entidad, col[i], r)) return;
       // Fuera de ese caso, solo pisa lo local si lo del servidor es más reciente.
       if (!col[i].act || (r.act||'') > col[i].act){ col[i] = Object.assign({}, col[i], r); n++; }
     });
@@ -3111,7 +3136,10 @@ const Auth = {
     this.user = null; this.token = null;
     clearInterval(this._timer);
     document.getElementById('app').classList.add('hide');
-    UI.closeAll();
+    /* V3: cierre por el sistema (salida o inactividad): no es la persona
+       descartando lo que llenaba, así que el borrador de domicilio se conserva. */
+    UI._porSistema = true;
+    try { UI.closeAll(); } finally { UI._porSistema = false; }
     Gate.show();
   },
   watch(){
@@ -3415,7 +3443,27 @@ const Sesion = {
       POS.cart = POS.cart.filter(i => !!DB.product(i.pid));
       /* FASE 1: un carrito guardado antes de esta versión no trae la marca de
          origen. Lo que no pertenece a la comanda abierta nació en el carrito. */
-      const lidsO = new Set(((POS.orderId && DB.order(POS.orderId)) || {items:[]}).items.map(i=>i.lid));
+      /* V2/V3 (#5): carrito guardado por la versión anterior sobre una comanda
+         con líneas sin lid (ver abajo). */
+      const oR = POS.orderId ? DB.order(POS.orderId) : null;
+      if (oR && Array.isArray(oR.items) && oR.items.some(i => !i.lid)){
+        /* V3 (N2): no se adivina. Un carrito guardado por la versión anterior
+           sobre una comanda sin lid no permite saber qué líneas eran copia de
+           la comanda y cuáles eran nuevas (en "Agregar" y en "Cobrar" se ven
+           igual). Se descartan del carrito y se avisa por nombre: la comanda
+           se vuelve a cargar completa al cobrar, sin riesgo de cobrar doble. */
+        const conLid = new Set(oR.items.map(i=>i.lid).filter(Boolean));
+        const libres = POS.cart.filter(c => !conLid.has(c.lid) && c.nuevo === undefined);
+        POS.cart = POS.cart.filter(c => !libres.includes(c));
+        DB.asegurarLids(oR);
+        if (libres.length){
+          const lista = libres.map(c => Money.qty(c) + '× ' + c.nombre).join(', ');
+          DB.log('sesion:carrito-transicion', 'comanda ' + oR.numero + ' · se retiraron del carrito: ' + lista, oR.id);
+          setTimeout(() => UI.toast('Actualización: se recargó la comanda ' + oR.numero + ' y se retiraron del carrito ' + lista +
+            '. Si alguno era un plato nuevo sin enviar, agréguelo otra vez.','warn', 9000), 800);
+        }
+      }
+      const lidsO = new Set(((oR) || {items:[]}).items.map(i=>i.lid));
       POS.cart.forEach(i => { if (!lidsO.has(i.lid) && i.nuevo === undefined) i.nuevo = true; });
     }
 
@@ -4534,7 +4582,7 @@ const Money = {
    ("control:bloqueo"). Así un error de programación futuro no llega al
    cierre de caja: se ve en el momento, en la caja, con su motivo.
    ========================================================================== */
-const APP_VER = '2026.09-F1';
+const APP_VER = '2026.09-F1.3';
 const Reglas = {
   TOL: 1,   // tolerancia de redondeo, en pesos
   /** Identificadores repetidos dentro de un conjunto de líneas. */
@@ -4602,9 +4650,11 @@ const Cobro = {
     ctx = ctx || {};
     if (this._enCurso) return null;
     const orden = ctx.orden || null;
+    const extras = Array.isArray(ctx.extras) ? ctx.extras : [];
     venta.estado = 'pagada';
     venta.pagos = Metrics.pagosNetos(venta);
-    const errores = Reglas.venta(venta, orden);
+    const ordenVal = orden && extras.length ? Object.assign({}, orden, {items:(orden.items||[]).concat(extras)}) : orden;
+    const errores = Reglas.venta(venta, ordenVal);
     if (errores.length){ Reglas.bloquear('cobro ' + (venta.numero||'') + ' (' + (ctx.origen||'') + ')', errores, venta.id); return null; }
     this._enCurso = true;
     try {
@@ -4634,8 +4684,9 @@ const Cobro = {
       const ix = DB.d.sales.findIndex(x => x.id === venta.id);
       if (ix >= 0) DB.d.sales[ix] = venta; else DB.d.sales.push(venta);
       if (ctx.nueva) c.consecutivo = (Number(c.consecutivo)||0) + 1;
-      // Cerrar la comanda
+      // Cerrar la comanda (y anotar en ella lo cobrado que nunca pasó por cocina)
       if (orden){
+        if (extras.length) orden.items = (orden.items||[]).concat(extras);
         orden.estado = 'cobrada'; orden.ventaId = venta.id; orden.numeroVenta = venta.numero;
         orden.tiempos = Object.assign({}, orden.tiempos, {cobrado:venta.fecha});
         orden.act = Util.now();
@@ -4934,14 +4985,15 @@ Views.dash = {
         '</div></div>';
     const t = tt || Views.cash.totals(caja);
     const gastos = t.gastosTotal || 0;
-    const liquidar = t.efectivoVentas - gastos;
+    /* V2: misma cifra que el arqueo y el Resumen de Turno (H7). */
+    const liquidar = Number(t.efectivoLiquidar)||0;
     const ticket = t.ventas.length ? t.total / t.ventas.length : 0;
     return '<div class="grid g-kpi" style="margin-bottom:14px">' +
       UI.kpi('Ventas de mi turno', Util.money(t.total), t.ventas.length + ' facturas · desde ' + Util.time(caja.apertura)) +
       UI.kpi('Efectivo cobrado', Util.money(t.efectivoVentas), 'Lo que va entrando al cajón') +
       UI.kpi('Transferencias', Util.money(t.transferencias), 'Nequi, Daviplata, transferencia') +
       UI.kpi('Gastos del turno', Util.money(gastos), 'Salidas registradas en tu turno') +
-      UI.kpi('Efectivo a liquidar', Util.money(liquidar), 'Efectivo cobrado menos gastos') +
+      UI.kpi('Efectivo a liquidar', Util.money(liquidar), 'Efectivo + ingresos − gastos en efectivo') +
       UI.kpi('Ticket promedio', Util.money(ticket), 'Base en caja ' + Util.money(caja.base)) +
     '</div>';
   },
@@ -6047,9 +6099,19 @@ const POS = {
     /* H6: no se agrega ni se corrige sobre una comanda que ya se cobró o se
        canceló (p. ej. la cobró otra tablet mientras esta seguía abierta). */
     if (o && !DB.ABIERTAS.includes(o.estado)){
-      UI.toast('La comanda ' + o.numero + ' ya está ' + o.estado + '. Se abre un pedido nuevo.','warn', 5200);
-      this.orderId = null; o = null;
-      if (this.modo === 'editar') this.modo = 'nuevo';
+      /* V2 (auditoría cruzada X1): los platos de la comanda cerrada NO pueden
+         viajar al pedido nuevo — se reenviaban a cocina y se cobraban otra
+         vez. Solo siguen los agregados en este carrito. */
+      const cerrada = new Set((o.items||[]).map(i=>i.lid).filter(Boolean));
+      const nuevos = this.cart.filter(i => i.nuevo && !cerrada.has(i.lid));
+      const numero = o.numero, estado = o.estado;
+      this.orderId = null; o = null; this.modo = 'nuevo';
+      this.cart = nuevos;
+      if (!nuevos.length){
+        this.reset(); Router.render();
+        return UI.toast('La comanda ' + numero + ' ya está ' + estado + '. No se envió nada.','warn', 6000);
+      }
+      UI.toast('La comanda ' + numero + ' ya está ' + estado + '. Solo se envían los ' + nuevos.length + ' plato(s) nuevo(s).','warn', 6000);
     }
     /* CORRECCIÓN DE RAÍZ (comanda y valor duplicados "en el sistema"):
        esta pantalla no exige reabrir la mesa desde "Comandas" para
@@ -6251,9 +6313,14 @@ const POS = {
     if (this.orderId){
       const oa = DB.order(this.orderId);
       if (oa && !DB.ABIERTAS.includes(oa.estado)){
-        this.reset(); this.paint();
+        /* V2: se descarta lo que ya se cobró; lo agregado en este carrito se
+           conserva como pedido nuevo para no perderlo. */
+        const cerrada = new Set((oa.items||[]).map(i=>i.lid).filter(Boolean));
+        const nuevos = this.cart.filter(i => i.nuevo && !cerrada.has(i.lid));
+        this.reset(); this.cart = nuevos; this.paint();
         return UI.toast('La comanda ' + oa.numero + ' ya está ' + oa.estado +
-          (oa.numeroVenta ? ' (factura ' + oa.numeroVenta + ')' : '') + '. No se cobra dos veces.','bad', 6000);
+          (oa.numeroVenta ? ' (factura ' + oa.numeroVenta + ')' : '') + '. No se cobra dos veces.' +
+          (nuevos.length ? ' Quedan ' + nuevos.length + ' plato(s) nuevo(s) en el pedido.' : ''),'bad', 7000);
       }
     }
     /* Cobrar una comanda abierta es cobrarla completa: se suman primero los
@@ -6499,9 +6566,8 @@ const POS = {
     const ordenVista = orden ? Object.assign({}, orden, {items:(orden.items||[]).concat(extras)}) : null;
     const errores = Reglas.venta(Object.assign({}, venta, {estado:'pagada', pagos:Metrics.pagosNetos(venta)}), ordenVista);
     if (errores.length) return Reglas.bloquear('cobro ' + numero + ' (pos)', errores, venta.id);
-    if (orden && extras.length){ orden.items = orden.items.concat(extras); }
 
-    const guardada = Cobro.finalizar(venta, {orden, nueva:!pendiente, origen:'pos'});
+    const guardada = Cobro.finalizar(venta, {orden, extras, nueva:!pendiente, origen:'pos'});
     if (!guardada) return;
 
     // Cliente
@@ -6598,6 +6664,11 @@ const Domicilios = {
     return deQuienTomo || null;
   },
 
+  /** Turno de domicilios al que pertenece una venta ANTIGUA (sin marcas). */
+  turnoLegacy(s){
+    if (!s || s.tipo !== 'domicilio' || s.domTurnoId || s.cajaId) return null;
+    return (DB.d.domTurnos||[]).find(t => t.userId === s.userId && s.fecha >= t.apertura && (!t.cierre || s.fecha <= t.cierre)) || null;
+  },
   turnoTotals(t){
     const ventas = DB.paid().filter(s => {
       if (s.tipo !== 'domicilio') return false;
@@ -7006,6 +7077,14 @@ Views.domicilios = {
 
   /* ── Formulario principal de nuevo domicilio / edición de uno existente ── */
   abrirFormulario(saleId){
+    /* V2: un borrador que apunta a un pedido ya cerrado se descarta. */
+    if (Domicilios._borrador && Domicilios._borrador._id){
+      const bid = Domicilios._borrador._id;
+      const sv = (DB.d.sales||[]).find(x => x.id === bid);
+      const ov = (DB.d.orders||[]).find(o => o.saleId === bid);
+      if ((sv && (sv.estado === 'pagada' || sv.anulada || sv.estado === 'anulada')) ||
+          (ov && ['cobrada','cancelada','eliminada'].includes(ov.estado))) Domicilios.resetBorrador();
+    }
     const bor = Domicilios.borrador();
     /* Si se pasa un saleId, cargar ese pedido en el borrador */
     if (saleId && !bor._id){
@@ -7112,6 +7191,8 @@ Views.domicilios = {
 
     const close = UI.modal({
       title:false, size:'lg',
+      /* V2: cerrar por cualquier vía (Escape incluido) limpia el borrador. */
+      onClose(){ if (!UI._porSistema) Domicilios.resetBorrador(); },
       body:
         /* ── Cabecera propia ── */
         '<div style="display:flex;align-items:center;gap:11px;margin:-16px -16px 0;padding:14px 16px;' +
@@ -7551,6 +7632,18 @@ Views.domicilios = {
           adiciones: Array.isArray(i.adiciones) ? i.adiciones.map(a=>Object.assign({},a)) : []}));
         const guardarVenta = (venta) => {
           const c = DB.d.config;
+          /* V2 (auditoría cruzada X2): un borrador viejo (cerrado con Escape,
+             o con datos de otra tablet) no puede volver a "pendiente" una
+             factura ya cobrada o anulada, ni tocar una comanda cerrada. */
+          const previa = bor._id ? (DB.d.sales||[]).find(x => x.id === bor._id) : null;
+          const ordPrev = bor._id ? (DB.d.orders||[]).find(o => o.saleId === bor._id) : null;
+          if ((previa && (previa.estado === 'pagada' || previa.anulada || previa.estado === 'anulada')) ||
+              (ordPrev && ['cobrada','cancelada','eliminada'].includes(ordPrev.estado))){
+            DB.log('control:bloqueo', 'domicilio ' + ((previa||{}).numero||'') + ' · se intentó guardar sobre un pedido ya cerrado', bor._id);
+            UI.toast('Este domicilio ya se cobró o se canceló' + (ordPrev && ordPrev.numeroVenta ? ' (factura ' + ordPrev.numeroVenta + ')' : '') +
+              '. No se guardó nada.','bad', 7000);
+            return null;
+          }
           if (!bor._id) c.consecutivo = (Number(c.consecutivo)||1)+1;
 
           if (bor._id){
@@ -7603,7 +7696,7 @@ Views.domicilios = {
           if (!bor.items.length) return UI.toast('Agrega al menos un plato al pedido.','warn');
 
           const { venta } = construirVenta();
-          guardarVenta(venta);
+          if (!guardarVenta(venta)){ cerrarModal(); Domicilios.resetBorrador(); return; }
           /* INTERVENCIÓN (causa raíz): antes, la lista y los KPIs
              (Pedidos hoy, Cobrado hoy, En despacho) solo se actualizaban
              si luego se pulsaba "Imprimir" o "Nuevo pedido" en el
@@ -7669,8 +7762,15 @@ Views.domicilios = {
                    mismo dueño del dinero, mismo inventario y misma caja que
                    Vender y Comandas. Si el control lo detiene, el pedido queda
                    guardado "En cocina" y no se registra ningún cobro. */
+                /* V3 (C3): todo cobro necesita dueño: turno de domicilios o caja. */
+                if (!Domicilios.turnoDeCobro(venta) && !DB.openCash())
+                  return UI.toast('Abre tu turno de domicilios (o que la caja esté abierta) antes de cobrar.','warn', 6000);
                 venta.estado = 'pendiente';
                 const orden = guardarVenta(venta);
+                if (!orden){ cerrarC(); cerrarModal(); Domicilios.resetBorrador(); return; }
+                /* V2 (#3): desde aquí el pedido ya existe; si el cobro se
+                   bloquea y se reintenta, se actualiza el mismo, no uno nuevo. */
+                bor._id = venta.id;
                 const cobrada = Cobro.finalizar(Object.assign({}, venta, {
                   pagos:[{metodo, monto:venta.total}], recibido:venta.total, cambio:0
                 }), {orden, nueva:false, origen:'domicilios'});
@@ -8475,6 +8575,7 @@ const Ticket = {
       (v.domicilio ? '<tr><td>Domicilio</td><td class="r">' + Util.money(v.domicilio,false) + '</td></tr>' : '') +
       '<tr><td class="b lg">TOTAL</td><td class="r b lg">' + Util.money(v.total,false) + '</td></tr></table>' + line +
       '<table>' + v.pagos.map(p=>'<tr><td>' + Util.esc(p.metodo) + '</td><td class="r">' + Util.money(p.monto,false) + '</td></tr>').join('') +
+      (v.cambio && v.recibido ? '<tr><td>Recibido</td><td class="r">' + Util.money(v.recibido,false) + '</td></tr>' : '') +
       (v.cambio ? '<tr><td>Cambio</td><td class="r">' + Util.money(v.cambio,false) + '</td></tr>' : '') + '</table>' + line +
       (v.estado === 'anulada' ? '<div class="c b" style="font-size:15px;letter-spacing:.2em">** ANULADA **</div>' + line : '') +
       '<div class="c">' + Util.esc(c.pieTicket) + '</div>' +
@@ -12725,7 +12826,8 @@ Views.control = {
       // 4. Líneas repetidas dentro de la factura
       if (Reglas.lidsRepetidos(s.items).length) R.lineas.push({doc:'Factura ' + s.numero, id:s.id, n:Reglas.lidsRepetidos(s.items).length});
       // 6. Venta que las versiones anteriores contaban en dos cierres
-      if (s.domTurnoId && !s.cajaId && (DB.d.cash||[]).some(c => s.fecha >= c.apertura && (!c.cierre || s.fecha <= c.cierre)))
+      if (!s.ver && s.tipo === 'domicilio' && (s.domTurnoId || Domicilios.turnoLegacy(s)) && !s.cajaId &&
+          (DB.d.cash||[]).some(c => s.fecha >= c.apertura && (!c.cierre || s.fecha <= c.cierre)))
         R.dobleCierre.push({s});
     });
     ordenes.filter(o => this.enRango(o.fecha)).forEach(o => {
@@ -12733,7 +12835,7 @@ Views.control = {
       // 7. Comanda cobrada cuyos platos no coinciden con su factura
       if (o.estado === 'cobrada' && o.ventaId){
         const v = (DB.d.sales||[]).find(x => x.id === o.ventaId);
-        if (v && v.estado === 'pagada' && Math.abs(Money.items(o.items) - Money.items(v.items)) > T)
+        if (v && v.estado === 'pagada' && Money.items(o.items) - Money.items(v.items) > T)
           R.comandaInflada.push({o, v, comanda:Money.items(o.items), factura:Money.items(v.items)});
       }
     });
@@ -12805,7 +12907,7 @@ Views.control = {
           '<td class="num">' + Util.esc(x.o.numeroVenta||'—') + '</td>' +
           '<td class="n">' + (esAdmin ? '<button class="btn sm ghost" data-chuerf="' + x.s.id + '" style="color:var(--ember-hi)">Anular pendiente</button>' : '') + '</td></tr>')) +
       sec('6 · Cierres de caja: guardado vs cálculo corregido',
-        'Lo que el sistema le pidió entregar a la cajera al cerrar, frente a lo que da el cálculo corregido (solo efectivo, sin cambio devuelto ni domicilios de otro turno). La diferencia muestra cuánto sumaba de más.',
+        'Lo que el sistema le pidió entregar a la cajera al cerrar, frente a lo que da el cálculo corregido (solo efectivo, sin cambio devuelto ni domicilios de otro turno). La diferencia muestra cuánto sumaba de más. Si una venta se anuló después del cierre, también aparece aquí.',
         [{t:'Apertura'},{t:'Responsable'},{t:'Esperado al cerrar',n:1},{t:'Esperado corregido',n:1},{t:'Contado',n:1},{t:'Sumaba de más',n:1}],
         R.cierres.map(x => { const d = x.guardado - x.actual;
           return '<tr><td>' + Util.dt(x.c.apertura) + '</td><td>' + Util.esc((DB.user(x.c.userId)||{}).nombre||'—') + '</td>' +
