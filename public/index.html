@@ -6639,6 +6639,41 @@ const Domicilios = {
       .slice().reverse();
   },
 
+  /** El ámbito de trabajo de quien está en pantalla: su turno de domicilios
+      si lo abrió, o su caja si es ella quien la tiene abierta. Null para
+      administración, que no está operando un turno. */
+  ambitoActual(){
+    const uid = (Auth.user||{}).id;
+    if (!uid) return null;
+    const turno = DB.openDomTurno(uid);
+    const caja = DB.openCash();
+    const cajaPropia = (caja && caja.userId === uid) ? caja : null;
+    if (!turno && !cajaPropia) return null;
+    return {turno, caja:cajaPropia, apertura:(turno || cajaPropia).apertura,
+            cierre:(turno || cajaPropia).cierre || null};
+  },
+
+  /** Los domicilios que le corresponden a quien está en pantalla.
+
+      CORRECCIÓN: la lista mostraba TODOS los domicilios del día a cualquiera
+      que abriera el módulo. Una cajera que entra a las 6 de la tarde veía los
+      de la mañana, que no son suyos ni entran en su cierre, y con decenas de
+      pedidos era imposible encontrar los propios. Quien tiene un turno abierto
+      ve el suyo; administración, que no opera turno, sigue viendo el día
+      completo. */
+  listaVisible(){
+    const todos = this.listaHoy();
+    const amb = this.ambitoActual();
+    if (!amb) return todos;
+    return todos.filter(s => {
+      /* Ya cobrado: manda la marca de a quién pertenece ese dinero. */
+      if (s.domTurnoId) return !!amb.turno && s.domTurnoId === amb.turno.id;
+      if (s.cajaId)     return !!amb.caja  && s.cajaId === amb.caja.id;
+      /* Todavía en despacho: es del turno si se tomó dentro de su ventana. */
+      return s.fecha >= amb.apertura && (!amb.cierre || s.fecha <= amb.cierre);
+    });
+  },
+
   /* INTERVENCIÓN: turnos de las encargadas de Domicilios (apertura y
      cierre), con la misma lógica de cálculo que usa el módulo Caja
      (Metrics.byPayment sobre las ventas del rango). Se agregan
@@ -6722,7 +6757,9 @@ Views.domicilios = {
   },
 
   html(){
-    const lista = Domicilios.listaHoy();
+    const lista = Domicilios.listaVisible();
+    const ambito = Domicilios.ambitoActual();
+    const ocultos = Domicilios.listaHoy().length - lista.length;
     const totalDia = lista.filter(s=>s.estado==='pagada').reduce((a,s)=>a+(s.total||0),0);
     const enDespacho = lista.filter(s=>s.estado!=='pagada'&&!s.anulada).length;
 
@@ -6852,13 +6889,17 @@ Views.domicilios = {
     '</div>';
 
     return '<div class="view-head"><div>' +
-        '<div class="eyebrow">Pedidos a domicilio de hoy · ' + Util.today() + '</div>' +
+        '<div class="eyebrow">' +
+          (ambito ? 'Pedidos de mi turno · desde ' + Util.time(ambito.apertura)
+                  : 'Pedidos a domicilio de hoy · ' + Util.today()) + '</div>' +
         '<h2>Domicilios</h2></div></div>' +
       turnoHTML +
       domsHTML +
       '<div class="grid g-kpi" style="margin-bottom:14px">' +
-        UI.kpi('Pedidos hoy', String(lista.length), 'domicilios registrados') +
-        UI.kpi('Cobrado hoy', Util.money(totalDia), lista.filter(s=>s.estado==='pagada').length + ' cobrados') +
+        /* Los rótulos siguen a lo que de verdad se está contando. */
+        UI.kpi(ambito ? 'Pedidos de mi turno' : 'Pedidos hoy', String(lista.length), 'domicilios registrados') +
+        UI.kpi(ambito ? 'Cobrado en mi turno' : 'Cobrado hoy', Util.money(totalDia),
+          lista.filter(s=>s.estado==='pagada').length + ' cobrados') +
         UI.kpi('En despacho', String(enDespacho), 'pendientes de cobro o entrega') +
       '</div>' +
       '<div class="card pad0" style="margin-bottom:14px">' +
@@ -6874,7 +6915,15 @@ Views.domicilios = {
             '<td class="n">' + (s.items||[]).reduce((a,i)=>a+(i.qty||1),0) + '</td>' +
             '<td class="n">' + Util.money(s.total||0) + '</td>' +
             '<td>' + estadoBadge(s) + '</td></tr>') : [],
-          {emptyTitle:'Sin domicilios hoy', emptyMsg:'Pulsa "Nuevo domicilio" para registrar el primero.'}) +
+          {emptyTitle: ambito ? 'Sin domicilios en tu turno' : 'Sin domicilios hoy',
+           emptyMsg:'Pulsa "Nuevo domicilio" para registrar el primero.'}) +
+        /* Que no parezca que se perdieron pedidos: se dice cuántos quedaron
+           fuera por ser de otro turno. */
+        (ocultos > 0
+          ? '<div class="dim" style="padding:0 16px 14px;font-size:11.5px;line-height:1.5">' +
+            ocultos + ' domicilio(s) de otros turnos del día no se muestran aquí. ' +
+            'Quedan en el cierre de quien los atendió.</div>'
+          : '') +
       '</div>' +
       cierresHTML;
   },
