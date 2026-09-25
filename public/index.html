@@ -2005,6 +2005,29 @@ const DB = {
   openOrders(){ return this.orders().filter(o => this.ABIERTAS.includes(o.estado)); },
   order(id){ return this.byId('orders').get(id); },
   ordersOf(mesa){ return this.openOrders().filter(o=>o.mesa===mesa); },
+  /** AUDITORÍA 2026-09 · H1: toda línea de comanda debe tener un `lid` fijo.
+      Las comandas nacidas en Domicilios (y las antiguas) no lo traían, y
+      POS.pendientesComanda() trataba cada línea sin lid como "pendiente":
+      al cobrar, TODA la comanda se sumaba otra vez al carrito ya cargado.
+      Se asigna una sola vez y queda guardado en la propia comanda. */
+  asegurarLids(o){
+    if (!o || !Array.isArray(o.items)) return o;
+    let cambio = false;
+    o.items.forEach(i => { if (i && !i.lid){ i.lid = Util.uid('l'); cambio = true; } });
+    if (cambio){ o.act = Util.now(); this.touch('orders'); Sync.enqueue('orders','update', o); }
+    return o;
+  },
+  /** AUDITORÍA 2026-09 · H4: dueño único de cada venta para los cierres.
+      Una venta se liquida en UN solo cierre: el turno de domicilios que la
+      cobró (domTurnoId) o la caja que la cobró (cajaId). Las ventas viejas,
+      sin ninguna de las dos marcas, se resuelven por ventana de tiempo. */
+  ventasDeCaja(c){
+    return this.paid().filter(s => {
+      if (s.cajaId) return s.cajaId === c.id;
+      if (s.domTurnoId) return false;
+      return s.fecha >= c.apertura && (!c.cierre || s.fecha <= c.cierre);
+    });
+  },
   /** Cantidades ya prometidas a cocina y todavía sin cobrar, por insumo. */
   _res:null,
   reservas(){
@@ -3390,6 +3413,10 @@ const Sesion = {
       POS.entrega = e.pos.entrega || {direccion:'', telefono:'', quien:'mensajero'};
       // Un plato borrado mientras tanto no puede quedar en el carrito
       POS.cart = POS.cart.filter(i => !!DB.product(i.pid));
+      /* FASE 1: un carrito guardado antes de esta versión no trae la marca de
+         origen. Lo que no pertenece a la comanda abierta nació en el carrito. */
+      const lidsO = new Set(((POS.orderId && DB.order(POS.orderId)) || {items:[]}).items.map(i=>i.lid));
+      POS.cart.forEach(i => { if (!lidsO.has(i.lid) && i.nuevo === undefined) i.nuevo = true; });
     }
 
     const vista = NAV.find(n => n.id === e.view);
@@ -3768,7 +3795,10 @@ const UI = {
         (opts.footer ? '<div class="modal-f">' + opts.footer + '</div>' : '') +
       '</div>';
     document.getElementById('modals').appendChild(ov);
-    const close = () => { ov.remove(); this._stack = this._stack.filter(x=>x!==close); };
+    const close = () => {
+      ov.remove(); this._stack = this._stack.filter(x=>x!==close);
+      if (opts.onClose){ const f = opts.onClose; opts.onClose = null; try{ f(); }catch(e){} }
+    };
     this._stack.push(close);
     ov.addEventListener('click', e => {
       if (e.target === ov || e.target.closest('[data-close]')) close();
@@ -4220,6 +4250,7 @@ const NAV = [
   {id:'reports', t:'Reportes',     ico:'rep',  perm:'reports'},
   {id:'sync',    t:'Sincronización',ico:'sync', perm:'sync'},
   {id:'audit',   t:'Auditoría',    ico:'shield',perm:'audit'},
+  {id:'control', t:'Control diario',ico:'shield',perm:'audit'},
   {id:'gastos',  t:'Gastos',       ico:'cash',  perm:'gastos'},
   {id:'cfg',     t:'Configuración',ico:'cfg',  perm:'cfg'}
 ];
@@ -4432,10 +4463,194 @@ const Metrics = {
     }
     return out;
   },
+  /** AUDITORÍA 2026-09 · H3: lo que REALMENTE quedó por medio de pago.
+      Si la cajera digitó el billete recibido (p. ej. $50.000 por una cuenta
+      de $36.000), la línea de Efectivo guardaba $50.000 y el cambio devuelto
+      ($14.000) se sumaba a la caja como si hubiera entrado. El excedente se
+      descuenta del efectivo. Es idempotente: una venta ya normalizada no
+      tiene excedente, así que corrige el histórico sin tocar lo nuevo. */
+  pagosNetos(s){
+    const pagos = (s.pagos||[]).map(p => ({metodo:p.metodo, monto:Number(p.monto)||0}));
+    let exceso = pagos.reduce((a,p)=>a+p.monto,0) - (Number(s.total)||0);
+    for (let i = pagos.length-1; i >= 0 && exceso > 0; i--){
+      if (pagos[i].metodo !== 'Efectivo') continue;
+      const q = Math.min(pagos[i].monto, exceso);
+      pagos[i].monto -= q; exceso -= q;
+    }
+    return pagos;
+  },
   byPayment(sales){
     const m = {};
-    sales.forEach(s => (s.pagos||[]).forEach(p => { m[p.metodo] = (m[p.metodo]||0) + p.monto; }));
+    sales.forEach(s => Metrics.pagosNetos(s).forEach(p => { m[p.metodo] = (m[p.metodo]||0) + p.monto; }));
     return m;
+  }
+};
+
+/* ==========================================================================
+   FASE 1 · MOTOR ÚNICO DE DINERO
+   Antes, el valor de un plato (precio + adiciones) × cantidad se calculaba a
+   mano en 19 lugares, unos con Number() y otros sin él: si un precio llegaba
+   como texto por sincronización, "16000" + 0 se volvía "160000". Cada módulo
+   (Vender, Comandas, Cocina, Domicilios, Caja, Tiquetes) sumaba a su manera,
+   y cada arreglo corregía un solo lugar. Ahora TODO valor monetario de una
+   línea, una comanda o una factura sale de aquí. Nadie más suma dinero.
+   ========================================================================== */
+const Money = {
+  /** Número seguro: texto, vacío o NaN valen 0. */
+  n(v){ const x = Number(v); return isFinite(x) ? x : 0; },
+  /** Cantidad de una línea (una línea nunca vale por 0 unidades). */
+  qty(i){ const q = Money.n(i && i.qty); return q > 0 ? q : 1; },
+  /** Suma de las adiciones de UNA unidad del plato. */
+  adiciones(i){ return ((i && i.adiciones) || []).reduce((s,a) => s + Money.n(a && a.precio), 0); },
+  /** Precio de una unidad con sus adiciones. */
+  unit(i){ return Money.n(i && i.precio) + Money.adiciones(i); },
+  /** Valor total de una línea. */
+  linea(i){ return Money.unit(i) * Money.qty(i); },
+  /** Suma de un conjunto de líneas (carrito, comanda, factura). */
+  items(items){ return (items || []).reduce((a,i) => a + Money.linea(i), 0); },
+  /** Cargo de domicilio: solo existe si el pedido sale del local. */
+  cargoDomicilio(o){ return (o && o.tipo && o.tipo !== 'mesa') ? Math.max(0, Math.round(Money.n(o.domicilio))) : 0; },
+  /** Lo que debe una comanda completa: todos sus platos + el domicilio. */
+  comanda(o){ return Money.items(o && o.items) + Money.cargoDomicilio(o); },
+  /** Total que DEBE tener una factura según sus componentes. */
+  totalVenta(v){
+    return Money.n(v.subtotal) - Money.n(v.descuento) + Money.n(v.impuesto) +
+           Money.n(v.propina) + Money.n(v.domicilio);
+  },
+  /** Una línea lista para guardarse: mismo formato en comanda y factura. */
+  copiaLinea(i, extra){
+    return Object.assign({}, i, {
+      precio: Money.n(i.precio), qty: Money.qty(i),
+      adiciones: ((i && i.adiciones) || []).map(a => Object.assign({}, a, {precio: Money.n(a && a.precio)})),
+      total: Money.linea(i)
+    }, extra || {});
+  }
+};
+
+/* ==========================================================================
+   FASE 1 · REGLAS DE CONTROL DEL DINERO
+   Condiciones que TODA factura debe cumplir antes de guardarse. Si alguna
+   falla, el cobro se detiene, no se registra nada y queda en Auditoría
+   ("control:bloqueo"). Así un error de programación futuro no llega al
+   cierre de caja: se ve en el momento, en la caja, con su motivo.
+   ========================================================================== */
+const APP_VER = '2026.09-F1';
+const Reglas = {
+  TOL: 1,   // tolerancia de redondeo, en pesos
+  /** Identificadores repetidos dentro de un conjunto de líneas. */
+  lidsRepetidos(items){
+    const vistos = new Set(), rep = [];
+    (items||[]).forEach(i => { if (!i || !i.lid) return; if (vistos.has(i.lid)) rep.push(i.lid); vistos.add(i.lid); });
+    return rep;
+  },
+  /** Devuelve la lista de violaciones (vacía = factura válida). */
+  venta(v, orden){
+    const e = [], T = this.TOL;
+    if (!v || !Array.isArray(v.items) || !v.items.length) e.push('la factura no tiene platos');
+    if (this.lidsRepetidos(v.items).length)
+      e.push('un mismo plato aparece dos veces en la factura (' + this.lidsRepetidos(v.items).length + ' línea(s) duplicada(s))');
+    const sub = Money.items(v.items);
+    if (Math.abs(sub - Money.n(v.subtotal)) > T)
+      e.push('el subtotal (' + Util.money(v.subtotal) + ') no es la suma de los platos (' + Util.money(sub) + ')');
+    if (Math.abs(Money.totalVenta(v) - Money.n(v.total)) > T)
+      e.push('el total (' + Util.money(v.total) + ') no cuadra con subtotal, descuento, impuesto, propina y domicilio (' + Util.money(Money.totalVenta(v)) + ')');
+    if (v.estado === 'pagada'){
+      const pagos = Metrics.pagosNetos(v);
+      if (pagos.some(p => p.monto < 0)) e.push('hay un pago negativo');
+      const suma = pagos.reduce((a,p)=>a+p.monto,0);
+      if (Math.abs(suma - Money.n(v.total)) > T)
+        e.push('los pagos (' + Util.money(suma) + ') no coinciden con el total (' + Util.money(v.total) + ')');
+      const previa = (DB.d.sales||[]).find(x => x.id === v.id);
+      if (previa && previa.estado === 'pagada') e.push('esta factura (' + (previa.numero||'') + ') ya estaba cobrada');
+    }
+    if (orden){
+      if (!DB.ABIERTAS.includes(orden.estado)) e.push('la comanda ' + orden.numero + ' ya está ' + orden.estado);
+      const otra = (DB.d.sales||[]).find(x => x.estado === 'pagada' && x.id !== v.id &&
+        (x.orderId === orden.id || (orden.saleId && x.id === orden.saleId)));
+      if (otra) e.push('la comanda ' + orden.numero + ' ya tiene la factura pagada ' + (otra.numero||''));
+      if (this.lidsRepetidos(orden.items).length) e.push('la comanda tiene platos duplicados');
+      /* Lo facturado debe incluir toda la comanda (ni un plato menos) y, con
+         los identificadores únicos de arriba, tampoco puede traer uno de más. */
+      const enFactura = new Set(v.items.map(i => i.lid).filter(Boolean));
+      const faltan = (orden.items||[]).filter(i => i.lid && !enFactura.has(i.lid));
+      if (faltan.length) e.push(faltan.length + ' plato(s) de la comanda no están en la factura');
+    }
+    return e;
+  },
+  /** Muestra y audita un bloqueo. Siempre devuelve false. */
+  bloquear(accion, errores, ref){
+    DB.log('control:bloqueo', accion + ' · ' + errores.join(' | '), ref || '');
+    UI.toast('Cobro detenido por control: ' + errores[0] + '. No se registró nada. Queda en Auditoría.','bad', 8000);
+    return false;
+  }
+};
+
+/* ==========================================================================
+   FASE 1 · RUTA ÚNICA DE COBRO
+   Vender, Comandas y Domicilios cobraban por dos caminos distintos, cada uno
+   con su propia forma de sellar el turno, tocar la caja, descontar
+   inventario y cerrar la comanda. Por esa grieta entraron la doble factura
+   y la venta contada en dos cierres. Ahora los dos módulos arman la factura
+   y la entregan aquí: validar → asignar dueño → inventario → caja →
+   guardar → cerrar comanda → sincronizar → auditar. Un solo lugar.
+   ========================================================================== */
+const Cobro = {
+  _enCurso:false,
+  /** ctx: {orden, nueva:boolean (consume consecutivo), origen:'pos'|'domicilios'}
+      Devuelve la venta guardada, o null si se bloqueó. */
+  finalizar(venta, ctx){
+    ctx = ctx || {};
+    if (this._enCurso) return null;
+    const orden = ctx.orden || null;
+    venta.estado = 'pagada';
+    venta.pagos = Metrics.pagosNetos(venta);
+    const errores = Reglas.venta(venta, orden);
+    if (errores.length){ Reglas.bloquear('cobro ' + (venta.numero||'') + ' (' + (ctx.origen||'') + ')', errores, venta.id); return null; }
+    this._enCurso = true;
+    try {
+      const c = DB.d.config;
+      venta.ver = APP_VER;
+      venta.cobradoPor = (Auth.user||{}).id;
+      venta.act = Util.now();
+      // Dueño único del dinero (H4): turno de domicilios o caja, nunca ambos.
+      if (venta.tipo === 'domicilio' && !venta.domTurnoId){
+        const td = Domicilios.turnoDeCobro(venta);
+        if (td) venta.domTurnoId = td.id;
+      }
+      const caja = DB.openCash();
+      if (venta.domTurnoId) delete venta.cajaId;
+      else if (caja) venta.cajaId = caja.id;
+      // Inventario (una sola vez por venta)
+      const consumo = DB.descontarVenta(venta) || {};
+      // Caja: solo el efectivo neto que entra a ESTA caja
+      const efectivo = venta.pagos.filter(p=>p.metodo==='Efectivo').reduce((a,p)=>a+p.monto,0);
+      if (caja && venta.cajaId === caja.id && efectivo > 0){
+        caja.movs.push({id:Util.uid('mv'), tipo:'venta', fecha:venta.fecha,
+          concepto:(venta.tipo==='domicilio' ? 'Domicilio ' : 'Venta ') + venta.numero,
+          monto:efectivo, metodo:'Efectivo', ventaId:venta.id, userId:venta.userId});
+        caja.act = Util.now();
+      }
+      // Guardar: se reemplaza si ya existía (factura pendiente), si no se agrega
+      const ix = DB.d.sales.findIndex(x => x.id === venta.id);
+      if (ix >= 0) DB.d.sales[ix] = venta; else DB.d.sales.push(venta);
+      if (ctx.nueva) c.consecutivo = (Number(c.consecutivo)||0) + 1;
+      // Cerrar la comanda
+      if (orden){
+        orden.estado = 'cobrada'; orden.ventaId = venta.id; orden.numeroVenta = venta.numero;
+        orden.tiempos = Object.assign({}, orden.tiempos, {cobrado:venta.fecha});
+        orden.act = Util.now();
+        venta.orderId = orden.id;
+        Sync.enqueue('orders','update', orden);
+      }
+      DB.touch('sales','orders','meats','cash','config');
+      DB.log('venta:pagada', venta.numero + ' · ' + Util.money(venta.total) + ' · ' +
+        venta.pagos.map(p=>p.metodo).join(', ') + ' · ' + (venta.domTurnoId ? 'turno domicilios' : 'caja'), venta.id);
+      Sync.enqueue('sales', ix >= 0 ? 'update' : 'create', venta);
+      Object.keys(consumo).forEach(mid => { const m = DB.meat(mid); if (m) Sync.enqueue('meats','update', m); });
+      if (caja && venta.cajaId === caja.id) Sync.enqueue('cash','update', caja);
+      if (ctx.nueva) Sync.enqueue('config','update', Object.assign({id:'config', act:Util.now()}, c));
+      return venta;
+    } finally { this._enCurso = false; }
   }
 };
 
@@ -4526,7 +4741,7 @@ Views.dash = {
         fila.n++;
         fila.total += Number(vt.total)||0;
         let cubierto = 0;
-        (vt.pagos||[]).forEach(pg => {
+        Metrics.pagosNetos(vt).forEach(pg => {
           const monto = Number(pg.monto)||0;
           cubierto += monto;
           if (pg.metodo === 'Efectivo') fila.efectivo += monto;
@@ -4770,8 +4985,7 @@ const POS = {
 
   calc(){
     const c = DB.d.config;
-    const adTotal = (i) => (i.adiciones||[]).reduce((s,x)=>s+x.precio,0);
-    const subtotal = this.cart.reduce((a,i)=>a + (i.precio + adTotal(i))*i.qty, 0);
+    const subtotal = Money.items(this.cart);
     let descuento = Math.round(subtotal * (Number(this.descPct)||0)/100) + (Number(this.descVal)||0);
     descuento = Math.min(descuento, subtotal);
     const base = subtotal - descuento;
@@ -4797,12 +5011,14 @@ const POS = {
   /** Platos que ya están en la comanda abierta y todavía no en el carrito. */
   pendientesComanda(){
     if (!this.orderId) return [];
-    const o = DB.order(this.orderId);
+    const o = DB.asegurarLids(DB.order(this.orderId));
     if (!o || !Array.isArray(o.items)) return [];
     if (o.estado === 'cobrada' || o.estado === 'cancelada' || o.estado === 'eliminada') return [];
     const enCarro = new Set(this.cart.map(i => i.lid).filter(Boolean));
-    return o.items.filter(i => !i.lid || !enCarro.has(i.lid)).map(i => ({
-      lid: i.lid || Util.uid('l'), pid:i.pid, nombre:i.nombre, precio:i.precio,
+    /* H1: antes era `!i.lid || !enCarro.has(i.lid)` — toda línea sin lid se
+       daba por pendiente y se volvía a sumar. Ahora toda línea tiene lid. */
+    return o.items.filter(i => !enCarro.has(i.lid)).map(i => ({
+      lid: i.lid, pid:i.pid, nombre:i.nombre, precio:i.precio,
       gramos:i.gramos, qty:i.qty, nota:i.nota || '',
       adiciones: Array.isArray(i.adiciones) ? i.adiciones.map(a=>Object.assign({},a)) : [],
       carne: i.carne, carneNombre: i.carneNombre || ''
@@ -4810,8 +5026,7 @@ const POS = {
   },
   /** Suma de lo que ya está en cocina y aún no se ve en el carrito. */
   subtotalPendiente(){
-    return this.pendientesComanda().reduce((a,i) =>
-      a + (i.precio + (i.adiciones||[]).reduce((s,x)=>s+(x.precio||0),0)) * i.qty, 0);
+    return Money.items(this.pendientesComanda());
   },
   /** Los totales de la cuenta completa de la mesa, sin tocar el carrito. */
   calcCuenta(){
@@ -4885,7 +5100,9 @@ const POS = {
       }
       return this.confirmarRepetir(ex);
     }
-    this.cart.push({lid:Util.uid('l'), pid, nombre:p.nombre, precio,
+    /* FASE 1: `nuevo` = línea nacida en este carrito (trazable). Cualquier
+       otra línea debe venir de la comanda con su mismo lid. */
+    this.cart.push({lid:Util.uid('l'), nuevo:true, pid, nombre:p.nombre, precio,
       gramos:cantidad, qty:1, nota, adiciones: [], carne:insumo || null,
       carneNombre: insumo ? DB.rotulo(DB.meat(insumo)) : ''});
     this.paint();
@@ -4897,9 +5114,8 @@ const POS = {
       "+" del carrito: ese botón subía la cantidad en silencio y sin tope, y
       era por donde se colaban la mayoría de las cantidades duplicadas. */
   async confirmarRepetir(linea){
-    const adTotal = (linea.adiciones||[]).reduce((s,x)=>s+(Number(x.precio)||0),0);
-    const unit = (Number(linea.precio)||0) + adTotal;
-    const qty = Number(linea.qty)||1;
+    const unit = Money.unit(linea);
+    const qty = Money.qty(linea);
     /* Cuántas porciones más permite el inventario, para no ofrecer de más. */
     let margen = Infinity;
     if (linea.carne){
@@ -5584,7 +5800,7 @@ const POS = {
           '<button class="btn sm ghost ci-btn" data-del="' + i.lid + '" style="color:var(--ash-dim)">Quitar</button>' +
         '</div>' +
       '</div>' +
-      '<div class="ci-side"><div class="ci-pr">' + Util.money((i.precio + (i.adiciones||[]).reduce((s,x)=>s+x.precio,0))*i.qty) + '</div>' +
+      '<div class="ci-side"><div class="ci-pr">' + Util.money(Money.linea(i)) + '</div>' +
         '<div class="qty"><button data-m="' + i.lid + '">−</button><span>' + i.qty + '</span><button data-p2="' + i.lid + '">+</button></div>' +
       '</div></div>').join('') :
       UI.empty('El pedido está vacío','Toca un plato para agregarlo.'));
@@ -5827,7 +6043,14 @@ const POS = {
     if (!this.cart.length) return;
     if (!this.mesa) return this.askMesa(()=>POS.sendKitchen());
     const c = DB.d.config;
-    let o = this.orderId ? DB.order(this.orderId) : null;
+    let o = this.orderId ? DB.asegurarLids(DB.order(this.orderId)) : null;
+    /* H6: no se agrega ni se corrige sobre una comanda que ya se cobró o se
+       canceló (p. ej. la cobró otra tablet mientras esta seguía abierta). */
+    if (o && !DB.ABIERTAS.includes(o.estado)){
+      UI.toast('La comanda ' + o.numero + ' ya está ' + o.estado + '. Se abre un pedido nuevo.','warn', 5200);
+      this.orderId = null; o = null;
+      if (this.modo === 'editar') this.modo = 'nuevo';
+    }
     /* CORRECCIÓN DE RAÍZ (comanda y valor duplicados "en el sistema"):
        esta pantalla no exige reabrir la mesa desde "Comandas" para
        agregarle otra ronda — basta con escribir el mismo número de mesa
@@ -5845,7 +6068,7 @@ const POS = {
        la hay, se usa esa (se le agrega la ronda) en vez de duplicarla —
        igual que ya se hace aquí mismo cuando sí se conoce el id. */
     if (!o && this.tipo === 'mesa' && this.mesa){
-      o = DB.ordersOf(this.mesa)[0] || null;
+      o = DB.asegurarLids(DB.ordersOf(this.mesa)[0] || null);
       if (o) this.orderId = o.id;
     }
     const ronda = o ? (Math.max(0, ...o.items.map(i=>i.ronda||1)) + 1) : 1;
@@ -5860,17 +6083,22 @@ const POS = {
        esto, "Editar Comanda" solo sabía sumar y la mesa nunca podía bajar. */
     if (o && this.modo === 'editar'){
       const previos = new Map((o.items||[]).map(i => [i.lid, i]));
-      o.items = this.cart.map(i => {
+      const itemsEd = this.cart.map(i => {
         const ya = i.lid ? previos.get(i.lid) : null;
-        const ad = (i.adiciones||[]).reduce((a,x)=>a+(Number(x.precio)||0),0);
-        return {lid:i.lid || Util.uid('l'), pid:i.pid, nombre:i.nombre, precio:i.precio,
-          qty:i.qty, gramos:i.gramos, nota:i.nota||'', adiciones:i.adiciones||[],
-          total:((Number(i.precio)||0) + ad) * (Number(i.qty)||1),
+        return {lid:i.lid || Util.uid('l'), pid:i.pid, nombre:i.nombre, precio:Money.n(i.precio),
+          qty:Money.qty(i), gramos:i.gramos, nota:i.nota||'', adiciones:i.adiciones||[],
+          total:Money.linea(i),
           carne: i.carne !== undefined ? i.carne : ((DB.product(i.pid)||{}).carne||null),
           carneNombre: i.carneNombre || '',
           ronda: ya ? (ya.ronda||1) : ronda,
           st: ya ? (ya.st||'pendiente') : 'pendiente'};
       });
+      /* FASE 1: una comanda nunca puede quedar con un plato repetido. */
+      if (Reglas.lidsRepetidos(itemsEd).length){
+        DB.log('control:bloqueo', 'corregir comanda ' + o.numero + ' · platos duplicados', o.id);
+        return UI.toast('Control: la corrección dejaba platos duplicados en la comanda ' + o.numero + '. No se guardó.','bad', 7000);
+      }
+      o.items = itemsEd;
       if (o.estado === 'listo' || o.estado === 'entregado') o.estado = 'pendiente';
       if (this.esLlevar()){
         o.tipo = this.tipo;
@@ -5894,13 +6122,17 @@ const POS = {
       return;
     }
     const nuevos = porEnviar.map(i => ({
-      lid:i.lid, pid:i.pid, nombre:i.nombre, precio:i.precio, qty:i.qty, gramos:i.gramos,
-      nota:i.nota, adiciones:i.adiciones||[], total:(i.precio + (i.adiciones||[]).reduce((s,x)=>s+x.precio,0))*i.qty,
+      lid:i.lid, pid:i.pid, nombre:i.nombre, precio:Money.n(i.precio), qty:Money.qty(i), gramos:i.gramos,
+      nota:i.nota, adiciones:i.adiciones||[], total:Money.linea(i),
       carne: i.carne !== undefined ? i.carne : ((DB.product(i.pid)||{}).carne||null),
       carneNombre: i.carneNombre || '',
       ronda, st:'pendiente'
     }));
     if (o){
+      if (Reglas.lidsRepetidos(o.items.concat(nuevos)).length){
+        DB.log('control:bloqueo', 'ronda comanda ' + o.numero + ' · platos duplicados', o.id);
+        return UI.toast('Control: esa ronda repetía platos ya enviados a la comanda ' + o.numero + '. No se envió.','bad', 7000);
+      }
       o.items = o.items.concat(nuevos);
       if (o.estado === 'listo' || o.estado === 'entregado') o.estado = 'pendiente';
       // Si se marcó para llevar después de abrir la mesa, la comanda se actualiza
@@ -5973,10 +6205,15 @@ const POS = {
   /** Abre una comanda existente. modo: true|'cobrar' (cuenta completa y cobra),
       'editar' (corregir lo ya pedido) o nada (agregar una ronda nueva). */
   loadOrder(id, modo){
-    const o = DB.order(id); if (!o) return;
+    const o = DB.asegurarLids(DB.order(id)); if (!o) return;
     const cobrar = (modo === true || modo === 'cobrar');
     const editar = (modo === 'editar');
     if (cobrar && !Auth.can('cobrar')) return UI.toast('La cuenta la cierra la caja.','warn');
+    /* H5: doble toque en "Cobrar" (o F2 encima) abría dos ventanas de cobro
+       sobre la misma mesa y cada una facturaba. Una sola a la vez. */
+    if (cobrar && (this._cobroAbierto || (this._cobroPedido && Date.now() - this._cobroPedido < 1500))) return;
+    if (cobrar) this._cobroPedido = Date.now();
+    if (!DB.ABIERTAS.includes(o.estado)) return UI.toast('La comanda ' + o.numero + ' ya está ' + o.estado + '.','warn');
     this.reset();
     this.orderId = o.id; this.mesa = o.mesa; this.clienteId = o.clienteId || 'cl_1';
     this.tipo = o.tipo || 'mesa';
@@ -5990,7 +6227,7 @@ const POS = {
          se quedaba con los platos viejos MÁS una copia de todos ellos: la
          mesa quedaba con el doble de lo que el cliente pidió, y eso era lo
          que después cobraba la caja. */
-      this.cart = o.items.map(i => ({lid:i.lid || Util.uid('l'), pid:i.pid, nombre:i.nombre, precio:i.precio,
+      this.cart = o.items.map(i => ({lid:i.lid, pid:i.pid, nombre:i.nombre, precio:i.precio,
         gramos:i.gramos, qty:i.qty, nota:i.nota||'',
         adiciones:Array.isArray(i.adiciones)?i.adiciones.map(a=>Object.assign({},a)):[],
         carne:i.carne, carneNombre:i.carneNombre||''}));
@@ -6003,9 +6240,22 @@ const POS = {
 
   /* --- cobro --- */
   pay(personas){
+    /* H5: una sola ventana de cobro a la vez (F2, doble toque, loadOrder). */
+    if (this._cobroAbierto) return;
+    this._cobroPedido = 0;
     if (!this.cart.length && !this.pendientesComanda().length) return;
     if (!Auth.can('cobrar')) return UI.toast('La cuenta la cierra la caja. Envía el pedido a cocina y avisa en caja.','warn', 4200);
     if (!DB.openCash()) return UI.toast('Abre la caja antes de cobrar.','warn');
+    /* H6: el carrito puede traer una comanda que ya se cobró en otra tablet,
+       o restaurada de una sesión anterior. Se cobraba otra vez. */
+    if (this.orderId){
+      const oa = DB.order(this.orderId);
+      if (oa && !DB.ABIERTAS.includes(oa.estado)){
+        this.reset(); this.paint();
+        return UI.toast('La comanda ' + oa.numero + ' ya está ' + oa.estado +
+          (oa.numeroVenta ? ' (factura ' + oa.numeroVenta + ')' : '') + '. No se cobra dos veces.','bad', 6000);
+      }
+    }
     /* Cobrar una comanda abierta es cobrarla completa: se suman primero los
        platos de las rondas anteriores que no estuvieran en el carrito. */
     /* El cargo de domicilio y el tipo de pedido se releen de la COMANDA justo
@@ -6035,8 +6285,10 @@ const POS = {
       : [{metodo:'Efectivo', monto:t.total}];
     let recibeCliente = 0;
 
+    this._cobroAbierto = true;
     const close = UI.modal({
       title:'Cobrar ' + Util.money(t.total), size:'',
+      onClose(){ POS._cobroAbierto = false; },
       body:'<div id="payBox"></div>',
       footer:'<button class="btn" data-close>Volver</button>' +
              '<button class="btn pri" id="doPay">Confirmar cobro y facturar</button>',
@@ -6170,6 +6422,12 @@ const POS = {
         ov.querySelector('#doPay').onclick = () => {
           const cubierto = pagos.reduce((a,p)=>a+(Number(p.monto)||0),0);
           if (cubierto < t.total - 0.5) return UI.toast('El pago no cubre el total. Faltan ' + Util.money(t.total-cubierto) + '.','bad');
+          /* H3: un excedente solo existe como cambio en efectivo. Si sobra en
+             transferencia o tarjeta, es un error de digitación. */
+          const exceso = cubierto - t.total;
+          const enEfectivo = pagos.filter(p=>p.metodo==='Efectivo').reduce((a,p)=>a+(Number(p.monto)||0),0);
+          if (exceso > 0.5 && enEfectivo < exceso)
+            return UI.toast('Sobran ' + Util.money(exceso) + ' en medios que no son efectivo. Corrige los montos: el cambio solo se da en efectivo.','bad', 5200);
           cls();
           POS.commit(pagos, t);
         };
@@ -6177,83 +6435,82 @@ const POS = {
     });
   },
   commit(pagos, t){
+    /* H5/H6: cerrojo de facturación y comanda todavía abierta. */
+    if (this._facturando) return;
+    const ordenPrevia = this.orderId ? DB.order(this.orderId) : null;
+    if (ordenPrevia && !DB.ABIERTAS.includes(ordenPrevia.estado)){
+      this.reset(); Router.render();
+      return UI.toast('La comanda ' + ordenPrevia.numero + ' ya está ' + ordenPrevia.estado + '. No se facturó de nuevo.','bad', 6000);
+    }
+    this._facturando = true;
+    try { return this._commit(pagos, t); } finally { this._facturando = false; }
+  },
+  _commit(pagos, t){
     const c = DB.d.config;
-    const numero = c.prefijo + String(c.consecutivo).padStart(5,'0');
-    const efectivo = pagos.filter(p=>p.metodo==='Efectivo').reduce((a,p)=>a+p.monto,0);
-    const cambio = Math.max(0, pagos.reduce((a,p)=>a+p.monto,0) - t.total);
+    /* H3: se guarda lo neto por medio de pago; lo recibido y el cambio aparte. */
+    const recibido = pagos.reduce((a,p)=>a+(Number(p.monto)||0),0);
+    const cambio = Math.max(0, recibido - t.total);
+
+    /* H2: si la comanda nació en Domicilios ya tiene su factura "pendiente":
+       se cobra ESA, con su mismo número, y no una nueva. */
+    const orden = this.orderId ? DB.order(this.orderId) : null;
+    const pendiente = (orden && orden.saleId)
+      ? (DB.d.sales||[]).find(x => x.id === orden.saleId && x.estado !== 'pagada' && x.estado !== 'anulada' && !x.anulada)
+      : null;
+    const numero = pendiente ? pendiente.numero : (c.prefijo + String(c.consecutivo).padStart(5,'0'));
 
     const venta = {
-      id:Util.uid('v'), opId:Util.uid('op'), numero, fecha:Util.now(), sede:c.sedeId,
+      id: pendiente ? pendiente.id : Util.uid('v'), opId:Util.uid('op'), numero, fecha:Util.now(), sede:c.sedeId,
       userId:(Auth.user||{}).id, clienteId:this.clienteId, mesa:this.mesa, nota:this.nota,
-      items:this.cart.map(i => ({pid:i.pid, nombre:i.nombre, precio:i.precio, qty:i.qty, gramos:i.gramos,
-        nota:i.nota, adiciones:i.adiciones||[], total:(i.precio + (i.adiciones||[]).reduce((s,x)=>s+x.precio,0))*i.qty,
+      items:this.cart.map(i => Money.copiaLinea({lid:i.lid || Util.uid('l'), pid:i.pid, nombre:i.nombre, precio:i.precio,
+        qty:i.qty, gramos:i.gramos, nota:i.nota, adiciones:i.adiciones||[],
         carne: i.carne !== undefined ? i.carne : ((DB.product(i.pid)||{}).carne||null),
         carneNombre: i.carneNombre || ''})),
       tipo:this.tipo, domicilio:t.domicilio,
       entrega:this.esLlevar() ? Object.assign({}, this.entrega) : null,
       subtotal:t.subtotal, descuento:t.descuento, impuesto:t.impuesto, propina:t.propina,
       costo:t.costo, total:t.total, pagos:pagos.map(p=>({metodo:p.metodo, monto:Number(p.monto)||0})),
-      cambio, estado:'pagada', sync:false, act:Util.now()
+      recibido, cambio, sync:false, act:Util.now()
     };
-    /* CORRECCIÓN DE RAÍZ (cierre de Domicilios en $0): cuando un pedido tipo
-       'domicilio' se cobra desde la pantalla general de Vender (no desde el
-       formulario propio de Domicilios), la venta nunca quedaba marcada con
-       el turno de domicilios activo (domTurnoId). Domicilios.turnoTotals()
-       solo la contaba si el userId y la fecha caían justo en la ventana del
-       turno; si otra persona cobraba, o el turno se abría/cerraba en medio,
-       la venta se perdía y el resumen de cierre salía en $0. Se sella aquí
-       el mismo turno que usa el "Cobrar" del módulo Domicilios. */
-    if (venta.tipo === 'domicilio'){
-      const turnoDom = Domicilios.turnoDeCobro(venta);
-      if (turnoDom) venta.domTurnoId = turnoDom.id;
+    if (pendiente){
+      venta.tomadoPor = pendiente.userId;
+      venta.entrega = Object.assign({}, pendiente.entrega||{}, venta.entrega||{});
+      venta.nota = venta.nota || pendiente.nota || '';
     }
 
-    // 1. Inventario: carne del plato + insumos adicionales, en una sola rutina
-    const consumo = DB.descontarVenta(venta) || {};
+    /* Lo que se cobró y nunca se envió a cocina se anota en la comanda, para
+       que factura y comanda digan lo mismo. Se prepara aparte y solo se
+       aplica si el control aprueba el cobro. */
+    let extras = [];
+    if (orden){
+      const yaEn = new Set((orden.items||[]).map(i=>i.lid).filter(Boolean));
+      const rondaFin = Math.max(0, ...(orden.items||[]).map(i=>i.ronda||1)) + 1;
+      extras = venta.items.filter(i => !yaEn.has(i.lid)).map(i =>
+        Object.assign({}, i, {adiciones:(i.adiciones||[]).map(a=>Object.assign({},a)), ronda:rondaFin, st:'cobrado'}));
+    }
+    /* FASE 1 · trazabilidad: toda línea facturada viene de la comanda (mismo
+       lid) o fue agregada a mano en este carrito. Una línea "fabricada" por
+       un error de programación —como la duplicación de H1, que inventaba
+       lids nuevos— no tiene origen y detiene el cobro. */
+    const lidsComanda = new Set(((orden && orden.items) || []).map(i=>i.lid).filter(Boolean));
+    const sinOrigen = this.cart.filter(i => !lidsComanda.has(i.lid) && !i.nuevo);
+    if (sinOrigen.length)
+      return Reglas.bloquear('cobro ' + numero + ' (pos)', [sinOrigen.length + ' línea(s) del cobro no vienen ni de la comanda ni del carrito (posible duplicado)'], venta.id);
+    const ordenVista = orden ? Object.assign({}, orden, {items:(orden.items||[]).concat(extras)}) : null;
+    const errores = Reglas.venta(Object.assign({}, venta, {estado:'pagada', pagos:Metrics.pagosNetos(venta)}), ordenVista);
+    if (errores.length) return Reglas.bloquear('cobro ' + numero + ' (pos)', errores, venta.id);
+    if (orden && extras.length){ orden.items = orden.items.concat(extras); }
 
-    // 2. Cliente
+    const guardada = Cobro.finalizar(venta, {orden, nueva:!pendiente, origen:'pos'});
+    if (!guardada) return;
+
+    // Cliente
     const cli = DB.client(this.clienteId);
     if (cli && !cli.sistema){
       cli.visitas++; cli.gastado += t.total; cli.ultima = venta.fecha;
       cli.puntos += Math.floor(t.total/10000); cli.act = Util.now();
+      DB.touch('clients'); Sync.enqueue('clients','update', cli);
     }
-    // 3. Caja
-    const caja = DB.openCash();
-    if (caja){
-      caja.movs.push({id:Util.uid('mv'), tipo:'venta', fecha:venta.fecha, concepto:'Venta ' + numero,
-        monto:efectivo, metodo:'Efectivo', ventaId:venta.id, userId:venta.userId});
-      caja.act = Util.now();
-    }
-    // 4. Persistir + auditar + encolar
-    DB.d.sales.push(venta);
-    c.consecutivo++;
-    const orden = this.orderId ? DB.order(this.orderId) : null;
-    if (orden){
-      /* Si se cobró algo que nunca se envió a cocina, queda anotado en la
-         comanda: así lo facturado y la comanda dicen lo mismo. */
-      const yaEn = new Set((orden.items||[]).map(i=>i.lid).filter(Boolean));
-      const rondaFin = Math.max(0, ...(orden.items||[]).map(i=>i.ronda||1)) + 1;
-      (this.cart||[]).forEach(i => {
-        if (i.lid && yaEn.has(i.lid)) return;
-        orden.items.push({lid:i.lid || Util.uid('l'), pid:i.pid, nombre:i.nombre, precio:i.precio,
-          qty:i.qty, gramos:i.gramos, nota:i.nota||'', adiciones:i.adiciones||[],
-          total:(i.precio + (i.adiciones||[]).reduce((s,x)=>s+(x.precio||0),0))*i.qty,
-          carne: i.carne !== undefined ? i.carne : null, carneNombre:i.carneNombre||'',
-          ronda:rondaFin, st:'cobrado'});
-      });
-      orden.estado = 'cobrada'; orden.ventaId = venta.id; orden.numeroVenta = numero;
-      orden.tiempos = Object.assign({}, orden.tiempos, {cobrado:venta.fecha});
-      orden.act = Util.now();
-      venta.orderId = orden.id;
-      Sync.enqueue('orders','update', orden);
-    }
-    DB.touch('sales','orders','meats','clients','cash','config');
-    DB.log('venta:pagada', numero + ' · ' + Util.money(t.total) + ' · ' + pagos.map(p=>p.metodo).join(', '), venta.id);
-    Sync.enqueue('sales','create', venta);
-    Object.keys(consumo).forEach(mid => { const m = DB.meat(mid); if (m) Sync.enqueue('meats','update', m); });
-    if (cli && !cli.sistema) Sync.enqueue('clients','update', cli);
-    if (caja) Sync.enqueue('cash','update', caja);
-    Sync.enqueue('config','update', Object.assign({id:'config', act:Util.now()}, c));
 
     this.reset();
     const bajos = DB.lowStock();
@@ -6297,10 +6554,7 @@ const Domicilios = {
   /* Calcula totales del borrador actual */
   calcBorrador(items, domicilioOverride){
     const c = DB.d.config;
-    const subtotal = items.reduce((a,i)=>{
-      const adP = (i.adiciones||[]).reduce((s,x)=>s+(Number(x.precio)||0),0);
-      return a + (Number(i.precio||0) + adP) * (Number(i.qty)||1);
-    }, 0);
+    const subtotal = Money.items(items);
     const impuesto = c.impuestoIncluido ? 0 : Math.round(subtotal*(Number(c.impuesto)||0)/100);
     /* INTERVENCIÓN: si el pedido tiene un valor de domicilio elegido con
        los botones rápidos ($1.000 a $10.000), ese valor manda sobre la
@@ -6349,6 +6603,8 @@ const Domicilios = {
       if (s.tipo !== 'domicilio') return false;
       // Marcada al cobrar: no hay nada que deducir.
       if (s.domTurnoId) return s.domTurnoId === t.id;
+      // H4: cobrada y liquidada en una caja: no es de este turno.
+      if (s.cajaId) return false;
       /* Ventas anteriores a que existiera la marca. Se resuelven como antes,
          por encargada y ventana, para que el historial siga cuadrando. */
       return s.userId === t.userId && s.fecha >= t.apertura && (!t.cierre || s.fecha <= t.cierre);
@@ -6450,7 +6706,7 @@ Views.domicilios = {
               sueltos.length + ' domicilio' + (sueltos.length>1?'s':'') + ' por ' + Util.money(suma) +
               ' se cobraron durante este turno pero no cuentan en él.</div>' +
             '<div class="dim" style="font-size:11.5px;margin-top:5px;line-height:1.5">' +
-              'Son cobros de otra encargada, o anteriores a que se sellara el turno en la venta. ' +
+              'Son cobros de otra encargada, cobros hechos en Caja (se liquidan en el cierre de caja), o anteriores a que se sellara el turno en la venta. ' +
               'Están en la lista de abajo y sí entran en el total del día.</div></div>';
         })() +
       '</div>';
@@ -6711,6 +6967,9 @@ Views.domicilios = {
       linea('Egresos (gastos de la encargada)', -tt.egresos) +
       '<hr>' +
       linea('TOTAL DEL TURNO', tt.total, {grande:true, mt:'6px'}) +
+      /* H9: lo que la encargada entrega en la mano es solo el efectivo; lo
+         demás ya está en el banco. Antes el tiquete solo mostraba el total. */
+      linea('EFECTIVO A ENTREGAR', tt.efectivo, {grande:true, mt:'6px'}) +
       '<hr>' +
       /* Un tiquete lleno de ceros no puede salir sin decir por qué. Casi
          siempre es que el turno se abrió cuando la jornada ya iba corrida: los
@@ -6756,6 +7015,13 @@ Views.domicilios = {
           UI.toast('Este pedido ya está cerrado; solo puede reimprimirse.','warn');
           return Views.domicilios.verTicket(s);
         }
+        /* H2: si su comanda ya se cobró (o canceló) desde Comandas, el pedido
+           está cerrado aunque esta factura siga "pendiente" (datos viejos). */
+        const oc = (DB.d.orders||[]).find(o => o.saleId === s.id);
+        if (oc && (oc.estado === 'cobrada' || oc.estado === 'cancelada' || oc.estado === 'eliminada')){
+          return UI.toast('Este domicilio ya se ' + (oc.estado==='cobrada' ? 'cobró' : 'canceló') +
+            ' desde Comandas' + (oc.numeroVenta ? ' (factura ' + oc.numeroVenta + ')' : '') + '. No se puede cobrar otra vez.','warn', 6000);
+        }
         Object.assign(bor, {
           nombre:(s.entrega&&s.entrega.nombre)||'',
           contacto:(s.entrega&&s.entrega.contacto)||'',
@@ -6781,8 +7047,8 @@ Views.domicilios = {
       if (!bor.items.length)
         return '<div class="dim" style="text-align:center;padding:16px;font-size:13px">Agrega platos del menú de abajo</div>';
       return bor.items.map((it, idx) => {
-        const adP = (it.adiciones||[]).reduce((s,x)=>s+(Number(x.precio)||0),0);
-        const lineaTotal = (Number(it.precio||0)+adP)*(Number(it.qty)||1);
+        const adP = Money.adiciones(it);
+        const lineaTotal = Money.linea(it);
         /* INTERVENCIÓN: misma estructura e igual rotulado que usa el
            módulo Vender en su carrito — botones de texto "Nota"/"Editar
            nota" y "Quitar" (antes solo iconos, sin nombre). */
@@ -7177,10 +7443,9 @@ Views.domicilios = {
         const subirCantidad = (it) => {
           if (!it) return;
           if (DB.d.config.confirmarRepetir === false){ it.qty++; refrescar(); return; }
-          const adEx = (it.adiciones||[]).reduce((a,x)=>a+(Number(x.precio)||0),0);
-          const antes = Number(it.qty)||1;
+          const antes = Money.qty(it);
           UI.repetir({nombre:it.nombre, detalle:it.carneNombre,
-            unit:(Number(it.precio)||0)+adEx, qty:antes}).then(destino => {
+            unit:Money.unit(it), qty:antes}).then(destino => {
               if (!destino || destino <= antes) return;
               it.qty = destino; refrescar();
               UI.toast(it.nombre + ' · ahora van ' + it.qty + '.','ok');
@@ -7211,6 +7476,7 @@ Views.domicilios = {
               return;
             }
             bor.items.push({
+              lid:Util.uid('l'),   // H1: identidad fija de la línea (Comandas la necesita)
               pid:p.id, nombre:p.nombre, precio:Number(p.precio)||0,
               qty:1, gramos:p.gramos||0, nota:'', adiciones:[],
               carne:p.carne||null, carneNombre:'',
@@ -7259,8 +7525,8 @@ Views.domicilios = {
               clienteId:'cl_1', mesa:'DOM', tipo:'domicilio',
               entrega:{nombre:bor.nombre, contacto:bor.contacto, direccion:bor.direccion, telefono:bor.telefono},
               items: bor.items.map(i=>{
-                const adP=(i.adiciones||[]).reduce((s,x)=>s+(Number(x.precio)||0),0);
-                return Object.assign({},i,{total:(Number(i.precio||0)+adP)*(Number(i.qty)||1)});
+                if (!i.lid) i.lid = Util.uid('l');
+                return Money.copiaLinea(i);
               }),
               subtotal:t.subtotal, descuento:0, impuesto:t.impuesto,
               propina:0, domicilio:t.domicilio, costo:0,
@@ -7277,6 +7543,12 @@ Views.domicilios = {
            con los platos viejos aunque la factura ya tuviera los nuevos.
            Ahora, si la comanda ya existe, se ACTUALIZA con los ítems y la
            nota vigentes, para que cocina y factura jamás diverjan. */
+        /* H2: la comanda recibía el MISMO arreglo de la factura
+           (items:venta.items). Todo lo que Comandas le agregaba a la comanda al
+           cobrar aparecía también dentro de la factura pendiente de Domicilios,
+           que así crecía sola. Cada una lleva ahora su propia copia. */
+        const copiaItems = (items) => (items||[]).map(i => Object.assign({}, i, {
+          adiciones: Array.isArray(i.adiciones) ? i.adiciones.map(a=>Object.assign({},a)) : []}));
         const guardarVenta = (venta) => {
           const c = DB.d.config;
           if (!bor._id) c.consecutivo = (Number(c.consecutivo)||1)+1;
@@ -7302,9 +7574,9 @@ Views.domicilios = {
                  El tiquete de cocina lo imprimía en cero y, si la caja cobraba
                  ese pedido desde Comandas, el domicilio no entraba en la
                  cuenta: la comanda decía un valor y el cobro otro. */
-              tipo:'domicilio', entrega:venta.entrega,
+              tipo:'domicilio', entrega:Object.assign({}, venta.entrega),
               domicilio:Number(venta.domicilio)||0,
-              items:venta.items, estado:'pendiente',
+              items:copiaItems(venta.items), estado:'pendiente',
               nota:bor.nota, fecha:venta.fecha, act:venta.fecha,
               meseroId:(Auth.user||{}).id, sync:false
             };
@@ -7312,9 +7584,9 @@ Views.domicilios = {
             DB.touch('orders');
             Sync.enqueue('orders','create',orden);
           } else if (orden.estado !== 'cobrada' && orden.estado !== 'cancelada') {
-            orden.entrega = venta.entrega;
+            orden.entrega = Object.assign({}, venta.entrega);
             orden.domicilio = Number(venta.domicilio)||0;
-            orden.items = venta.items;
+            orden.items = copiaItems(venta.items);
             orden.nota = bor.nota;
             orden.act = Util.now();
             DB.touch('orders');
@@ -7363,6 +7635,8 @@ Views.domicilios = {
            así ya no puede volver a facturarse por duplicado. */
         const btnCobrar = ov.querySelector('#dm-cobrar');
         if (btnCobrar) btnCobrar.onclick = () => {
+          /* H5: una sola ventana de cobro por domicilio. */
+          if (Domicilios._cobrando) return;
           sync();
           if (!bor.nombre)    return UI.toast('Escribe el nombre del cliente.','warn');
           if (!bor.direccion) return UI.toast('La dirección de entrega es obligatoria.','warn');
@@ -7370,8 +7644,10 @@ Views.domicilios = {
 
           const { venta } = construirVenta();
           const METODOS = ['Efectivo','Tarjeta débito','Tarjeta crédito','Transferencia','Nequi','Daviplata','Otro'];
+          Domicilios._cobrando = true;
           UI.modal({
             title:'Cobrar domicilio', size:'sm',
+            onClose(){ Domicilios._cobrando = false; },
             body:
               '<div class="row" style="justify-content:space-between;margin-bottom:12px">' +
                 '<span class="mut">Cliente</span><b>' + Util.esc(bor.nombre) + '</b></div>' +
@@ -7384,38 +7660,22 @@ Views.domicilios = {
               '<button type="button" class="btn gold" id="dmc-ok">' + Util.ico('cash') + ' Confirmar cobro</button>',
             onMount(ovc, cerrarC){
               ovc.querySelector('#dmc-ok').onclick = () => {
+                /* H2/H5: nunca se cobra dos veces la misma factura. */
+                const ya = (DB.d.sales||[]).find(x => x.id === venta.id);
+                if (ya && (ya.estado === 'pagada' || ya.anulada)){ cerrarC(); return UI.toast('Este domicilio ya estaba cobrado.','warn'); }
                 const metodo = ovc.querySelector('#dmc-met').value || 'Efectivo';
-                venta.estado = 'pagada';
-                venta.pagos = [{metodo, monto:venta.total}];
-                venta.cambio = 0;
-                /* Se sella aquí el turno al que pertenece este dinero. Es el
-                   único momento en que el cobro existe, y deja el resumen
-                   fuera del alcance de quién guarde o edite la venta después. */
-                const turnoDom = Domicilios.turnoDeCobro(venta);
-                if (turnoDom) venta.domTurnoId = turnoDom.id;
+                /* FASE 1: el pedido y su comanda se guardan como siempre y el
+                   cobro pasa por la ruta única (Cobro.finalizar): mismas reglas,
+                   mismo dueño del dinero, mismo inventario y misma caja que
+                   Vender y Comandas. Si el control lo detiene, el pedido queda
+                   guardado "En cocina" y no se registra ningún cobro. */
+                venta.estado = 'pendiente';
                 const orden = guardarVenta(venta);
-                /* Un domicilio cobrado sale del restaurante igual que cualquier
-                   venta: tiene que bajar del inventario. Antes no lo hacía. */
-                DB.descontarVenta(venta);
-                Sync.enqueue('sales','update', venta);
-                if (orden){
-                  orden.estado = 'cobrada';
-                  orden.ventaId = venta.id; orden.numeroVenta = venta.numero;
-                  orden.tiempos = Object.assign({}, orden.tiempos, {cobrado:venta.fecha});
-                  orden.act = Util.now();
-                  DB.touch('orders');
-                  Sync.enqueue('orders','update', orden);
-                }
-                if (metodo === 'Efectivo'){
-                  const caja = DB.openCash();
-                  if (caja){
-                    caja.movs.push({id:Util.uid('mv'), tipo:'venta', fecha:venta.fecha, concepto:'Domicilio ' + venta.numero,
-                      monto:venta.total, metodo:'Efectivo', ventaId:venta.id, userId:venta.userId});
-                    caja.act = Util.now();
-                    DB.touch('cash');
-                    Sync.enqueue('cash','update', caja);
-                  }
-                }
+                const cobrada = Cobro.finalizar(Object.assign({}, venta, {
+                  pagos:[{metodo, monto:venta.total}], recibido:venta.total, cambio:0
+                }), {orden, nueva:false, origen:'domicilios'});
+                if (!cobrada){ Router.render(); return; }
+                Object.assign(venta, cobrada);
                 /* INTERVENCIÓN (causa raíz): refrescar de inmediato la
                    vista del módulo (KPIs "Cobrado hoy"/"En despacho" y
                    la lista), sin depender de qué se haga después con el
@@ -7463,16 +7723,15 @@ Views.domicilios = {
     const w58 = c.ticket==='58';
     const line = '<hr>';
     const it = (venta.items||[]).map(i=>{
-      const adP=(i.adiciones||[]).reduce((s,x)=>s+(Number(x.precio)||0),0);
-      const lt=(Number(i.precio||0)+adP)*(Number(i.qty)||1);
+      const adP=Money.adiciones(i);
+      const lt=Money.linea(i);
       return '<tr><td colspan="2"><b>' + Util.esc(i.nombre) + '</b></td></tr>' +
         '<tr><td>' + i.qty + ' × ' + Util.money(i.precio,false) + (adP?'  +adic '+Util.money(adP,false):'') + '</td><td class="r b">' + Util.money(lt,false) + '</td></tr>' +
         (i.nota?'<tr><td colspan="2">  * '+Util.esc(i.nota)+'</td></tr>':'');
     }).join('');
 
     const sub = (venta.items||[]).reduce((a,i)=>{
-      const adP=(i.adiciones||[]).reduce((s,x)=>s+(Number(x.precio)||0),0);
-      return a+(Number(i.precio||0)+adP)*(Number(i.qty)||1);
+      return a+Money.linea(i);
     },0);
 
     const cuerpo =
@@ -7655,7 +7914,8 @@ const Orders = {
     suspendida:{t:'Suspendida',  b:'warn', sig:null,         accion:null},
     eliminada: {t:'Eliminada',   b:'mut',  sig:null,         accion:null}
   },
-  total(o){ return o.items.reduce((a,i)=>a + (i.precio + ((i.adiciones||[]).reduce((s,x)=>s+(x.precio||0),0)))*i.qty, 0); },
+  /** Solo los platos (sin domicilio). La cuenta completa es Money.comanda(o). */
+  total(o){ return Money.items(o && o.items); },
   gramos(o){ return o.items.reduce((a,i)=>a + (i.gramos||0)*i.qty, 0); },
   minutos(o){ return Math.floor((Date.now() - new Date((o.tiempos||{}).enviado || o.fecha).getTime())/60000); },
   reloj(o){
@@ -7959,8 +8219,8 @@ Views.orders = {
         Util.esc(((DB.user(o.meseroId)||{}).nombre||'').split(' ')[0]) + '</div></div>' +
         '<span class="badge ' + est.b + ' right" style="font-size:15px;font-weight:800;padding:8px 14px;letter-spacing:.07em;text-transform:uppercase;min-width:100px;text-align:center">' + est.t + '</span></div>' +
         '<div class="col" style="gap:4px">' + o.items.slice(0,6).map((i, idx) => {
-          const adPrecioItem = (i.adiciones||[]).reduce((s,x)=>s+(Number(x.precio)||0),0);
-          const lineaTotal = (Number(i.precio||0) + adPrecioItem) * (Number(i.qty)||1);
+          const adPrecioItem = Money.adiciones(i);
+          const lineaTotal = Money.linea(i);
           return '<div class="row" style="gap:8px"><span class="num" style="color:var(--brass);min-width:20px">' + i.qty + '</span>' +
           '<span style="font-size:12.5px">' + Util.esc(i.nombre) + (adPrecioItem>0 ? ' <span style="color:var(--ember-hi);font-size:10px">+adic</span>' : '') + '</span>' +
           '<span class="num right dim" style="font-size:12px">' + Util.money(lineaTotal) + '</span>' +
@@ -7973,7 +8233,7 @@ Views.orders = {
           '<b class="num right" style="font-size:12.5px">' + Util.money(o.domicilio) + '</b></div>' : '') +
         '<div class="row" style="padding-top:9px;border-top:1px dashed var(--line)">' +
           '<span class="eyebrow">Total</span><b class="num right" style="font-size:17px">' +
-          Util.money(Orders.total(o) + (Number(o.domicilio)||0)) + '</b></div>' +
+          Util.money(Money.comanda(o)) + '</b></div>' +
         '<div class="row wrap" style="gap:7px">' +
           (Auth.can('pos') ? '<button class="btn sm grow" data-add="' + o.id + '">Agregar</button>' : '') +
           '<button class="btn sm grow" data-pre="' + o.id + '">Precuenta</button>' +
@@ -8183,8 +8443,8 @@ const Ticket = {
     const cli = DB.client(v.clienteId) || {nombre:'Consumidor final'};
     const line = '<hr>';
     const it = v.items.map(i => {
-      const adP = (i.adiciones||[]).reduce((s,a)=>s+(Number(a.precio)||0),0);
-      const lineaTotal = (Number(i.precio||0)+adP)*(Number(i.qty)||1);
+      const adP = Money.adiciones(i);
+      const lineaTotal = Money.linea(i);
       return '<tr><td colspan="2">' + Util.esc(i.nombre) + (i.carneNombre ? ' (' + Util.esc(i.carneNombre) + ')' : '') +
         (i.gramos && DB.unidadDe(i.carne) !== 'und' ? ' (' + Util.cantCorta(i.gramos, DB.unidadDe(i.carne)) + ')' : '') + '</td></tr>' +
       '<tr><td>' + i.qty + ' x ' + Util.money(i.precio,false) + '</td><td class="r"><b>' + Util.money(lineaTotal,false) + '</b></td></tr>' +
@@ -8235,10 +8495,10 @@ const Ticket = {
     if (!nuevos.length) nuevos = todos.slice();
     const previos = todos.filter(i => nuevos.indexOf(i) === -1);
     const llevar = o.tipo && o.tipo !== 'mesa';
-    const adTotalItem = (i) => (i.adiciones||[]).reduce((s,a)=>s+(Number(a.precio)||0),0);
-    const lineaTotal = (i) => (Number(i.precio||0) + adTotalItem(i)) * (Number(i.qty)||1);
-    const cargoDom = llevar ? (Number(o.domicilio)||0) : 0;
-    const totalMesa = Orders.total(o) + cargoDom;
+    const adTotalItem = (i) => Money.adiciones(i);
+    const lineaTotal = (i) => Money.linea(i);
+    const cargoDom = Money.cargoDomicilio(o);
+    const totalMesa = Money.comanda(o);
 
     /* Ficha completa para cocina: carne, porción, nota y adiciones. */
     const fichaCocina = (i) => {
@@ -8368,7 +8628,7 @@ const Ticket = {
     const sub = Orders.total(o);
     const imp = c.impuestoIncluido ? 0 : Math.round(sub*(Number(c.impuesto)||0)/100);
     const prop = Math.round(sub*(Number(c.propina)||0)/100);
-    const dom = Number(o.domicilio)||0;
+    const dom = Money.cargoDomicilio(o);
     const cuerpo = '<div class="ticket">' +
       (Ticket.logoImp() ? '<div class="c"><img src="' + Ticket.logoImp() +
         '" style="max-width:50%;height:auto;margin-bottom:4px;background:#fff"></div>' : '') +
@@ -8378,9 +8638,9 @@ const Ticket = {
         ' · ' + Util.esc(o.numero) + '</div>' +
       '<div class="c b" style="margin-top:4px">PRECUENTA — NO ES FACTURA</div><hr>' +
       '<table>' + o.items.map(i => {
-        const adP = (i.adiciones||[]).reduce((s,x)=>s+(Number(x.precio)||0),0);
+        const adP = Money.adiciones(i);
         return '<tr><td>' + i.qty + ' ' + Util.esc(i.nombre) + (adP>0?'+adic':'') + '</td>' +
-          '<td class="r">' + Util.money((Number(i.precio||0)+adP)*(Number(i.qty)||1), false) + '</td></tr>';
+          '<td class="r">' + Util.money(Money.linea(i), false) + '</td></tr>';
       }).join('') + '</table><hr>' +
       '<table><tr><td>Subtotal</td><td class="r">' + Util.money(sub,false) + '</td></tr>' +
       (imp ? '<tr><td>' + Util.esc(c.impuestoNombre) + ' ' + c.impuesto + '%</td><td class="r">' + Util.money(imp,false) + '</td></tr>' : '') +
@@ -8440,8 +8700,8 @@ const Sales = {
     const cli = DB.client(v.clienteId);
     if (cli && !cli.sistema){ cli.visitas = Math.max(0, cli.visitas-1); cli.gastado = Math.max(0, cli.gastado - v.total); cli.act = Util.now(); }
     const caja = DB.openCash();
-    if (caja){
-      const ef = v.pagos.filter(p=>p.metodo==='Efectivo').reduce((a,p)=>a+p.monto,0);
+    if (caja && (!v.cajaId || v.cajaId === caja.id) && !v.domTurnoId){
+      const ef = Metrics.pagosNetos(v).filter(p=>p.metodo==='Efectivo').reduce((a,p)=>a+p.monto,0);
       /* CORRECCIÓN DE RAÍZ (caja: doble descuento al anular una venta en efectivo):
          este movimiento queda en caja.movs SOLO como rastro visible en "Movimientos
          del turno" (para que se vea que hubo una anulación). Views.cash.totals()
@@ -11215,7 +11475,10 @@ Views.cash = {
              : '<button class="btn gold" data-act="open">Abrir caja</button>';
   },
   totals(c){
-    const ventas = DB.paid().filter(s => s.fecha >= c.apertura && (!c.cierre || s.fecha <= c.cierre));
+    /* H4: solo las ventas cuyo dinero es de ESTA caja (ver DB.ventasDeCaja).
+       Antes entraban todas las ventas pagadas dentro de la ventana de tiempo,
+       incluidos los domicilios que cobró y liquida la encargada en su turno. */
+    const ventas = DB.ventasDeCaja(c);
     const porMetodo = Metrics.byPayment(ventas);
     const efectivoVentas = porMetodo['Efectivo']||0;
     const transferencias = (porMetodo['Transferencia']||0) + (porMetodo['Nequi']||0) + (porMetodo['Daviplata']||0);
@@ -11243,7 +11506,12 @@ Views.cash = {
        falsa por ese mismo valor, aunque la caja estuviera perfectamente
        cuadrada. Se corrige a base + efectivo + transferencias + mov., que es
        lo que la persona que cierra realmente puede contar y comparar. */
-    const esperado = c.base + efectivoVentas + transferencias + ingresos + egresos;
+    /* H7: "esperado" es SOLO el efectivo que debe haber en el cajón. Antes
+       sumaba también las transferencias, que nunca pasan por el cajón: el
+       arqueo pedía más plata de la que existía y nunca coincidía con el
+       Resumen de Turno (que sí las descontaba). */
+    const esperado = c.base + efectivoVentas + ingresos + egresos;
+    const efectivoLiquidar = efectivoVentas + ingresos + egresos;
     /* INTERVENCIÓN (corrección de raíz): "egresos" solo suma los gastos
        pagados en Efectivo, porque son los únicos que de verdad mueven el
        cajón físico — eso está bien para el arqueo (esperado). Pero el
@@ -11268,7 +11536,12 @@ Views.cash = {
       .filter(g => !g.borrado && (g.cajaId ? g.cajaId === c.id :
         (g.fecha >= c.apertura && (!c.cierre || g.fecha <= c.cierre))))
       .reduce((a,g)=>a+(Number(g.valor)||0), 0);
-    return {ventas, porMetodo, efectivoVentas, transferencias, otrosMedios, ingresos, egresos, esperado, total, gastosTotal};
+    const gastosTransferencia = (DB.d.gastos||[])
+      .filter(g => !g.borrado && g.metodo !== 'Efectivo' && (g.cajaId ? g.cajaId === c.id :
+        (g.fecha >= c.apertura && (!c.cierre || g.fecha <= c.cierre))))
+      .reduce((a,g)=>a+(Number(g.valor)||0), 0);
+    return {ventas, porMetodo, efectivoVentas, transferencias, otrosMedios, ingresos, egresos, esperado,
+            efectivoLiquidar, total, gastosTotal, gastosTransferencia};
   },
   html(){
     const c = DB.openCash();
@@ -11478,6 +11751,7 @@ Views.cash = {
        del turno (t.gastosTotal, tomado de DB.d.gastos — efectivo +
        transferencia), no solo los egresos en efectivo de c.movs. */
     const egresos = t.gastosTotal || 0;
+    const egresosEfectivo = -(Number(t.egresos)||0);
     /* El cierre de la cajera no es contable, es de caja: de todo lo vendido
        en el turno solo entrega en la mano el efectivo. Lo cobrado por
        transferencia (Nequi, Daviplata, transferencia) entró al banco, y lo
@@ -11488,7 +11762,10 @@ Views.cash = {
        imprime paso a paso para que la cajera pueda seguir la cuenta. */
     const otrosMedios = Math.max(0, Number(t.otrosMedios)||0);
     const transferencias = Number(t.transferencias)||0;
-    const efectivoLiquidar = t.total - egresos - transferencias - otrosMedios;
+    /* H7: antes era total − gastos (TODOS, incluso los pagados por
+       transferencia, que no salen del cajón) − transferencias − otros; y
+       omitía los ingresos manuales. Ahora es el mismo cálculo del arqueo. */
+    const efectivoLiquidar = Number(t.efectivoLiquidar)||0;
 
     const linea = (label, valor, opts) => {
       opts = opts || {};
@@ -11526,9 +11803,12 @@ Views.cash = {
       /* Solo aparece si el turno tuvo cobros por datáfono; si no, no estorba.
          Sin este renglón los números impresos no cuadrarían entre sí. */
       (otrosMedios ? linea('Otros medios', otrosMedios) : '') +
-      linea('Gastos', egresos) +
+      (t.ingresos ? linea('Ingresos manuales (efectivo)', t.ingresos) : '') +
+      linea('Gastos pagados en efectivo', egresosEfectivo) +
+      (t.gastosTransferencia ? linea('Gastos por transferencia (no salen del cajón)', t.gastosTransferencia, {indent:true}) : '') +
       '<hr>' +
       linea('TOTAL EFECTIVO A LIQUIDAR', efectivoLiquidar, {grande:true, mt:'6px'}) +
+      linea('Efectivo en cajón (con base)', t.esperado) +
       '</div>';
 
     UI.modal({
@@ -11631,8 +11911,12 @@ Views.cash = {
            que quede visible aunque no todos afecten el efectivo físico
            del cajón — sin alterar el cálculo de "Total esperado". */
         '<div class="tot-row"><span>Gastos totales del turno (todo medio de pago)</span><b>' + Util.money(t.gastosTotal) + '</b></div>' +
-        '<div class="tot-grand"><span>Total esperado</span><b>' + Util.money(t.esperado) + '</b></div></div>',
-      fields:[{k:'contado', label:'Total contado (efectivo + transferencias)', type:'number', val:t.esperado, min:0, req:true, full:true},
+        '<div class="tot-row"><span>Efectivo a liquidar (sin base)</span><b>' + Util.money(t.efectivoLiquidar) + '</b></div>' +
+        '<div class="tot-grand"><span>Efectivo esperado en el cajón (con base)</span><b>' + Util.money(t.esperado) + '</b></div>' +
+        '<p class="dim" style="font-size:11.5px;margin-top:6px">Las transferencias (' + Util.money(t.transferencias) + ') se verifican contra el banco; no se cuentan en el cajón.</p></div>',
+      /* H7: se cuenta el efectivo físico, sin valor precargado: con el
+         esperado ya escrito, la diferencia salía siempre en cero. */
+      fields:[{k:'contado', label:'Efectivo contado en el cajón (incluida la base)', type:'number', val:'', min:0, req:true, full:true},
               {k:'nota', label:'Observación del cierre', type:'textarea', val:'', full:true}],
       onSave(d, close){
         c.estado = 'cerrada'; c.cierre = Util.now(); c.esperado = t.esperado; c.contado = d.contado;
@@ -11766,16 +12050,13 @@ const Reports = {
       {k:'diferencia',t:'Diferencia',n:1,f:'$'}],
       build(v, from, to){ return DB.d.cash.filter(c=>c.apertura.slice(0,10)>=from && c.apertura.slice(0,10)<=to)
         .map(c=>{
-          const ventas = DB.paid().filter(s => s.fecha >= c.apertura && (!c.cierre || s.fecha <= c.cierre));
-          const porMetodo = {};
-          ventas.forEach(s => (s.pagos||[]).forEach(p => { porMetodo[p.metodo] = (porMetodo[p.metodo]||0) + p.monto; }));
-          const totalVentas = ventas.reduce((a,s)=>a+s.total,0);
-          const efVentas = porMetodo['Efectivo']||0;
-          const transf = (porMetodo['Transferencia']||0) + (porMetodo['Nequi']||0) + (porMetodo['Daviplata']||0);
-          const otrosMedios = totalVentas - efVentas - transf;
-          const ingresos = c.movs.filter(m=>m.tipo==='ingreso').reduce((a,m)=>a+m.monto,0);
-          const egresos = c.movs.filter(m=>m.tipo==='egreso').reduce((a,m)=>a+m.monto,0);
-          const esperadoCalc = c.estado==='cerrada' ? (c.esperado||0) : (c.base + totalVentas + ingresos + egresos);
+          /* H8: el reporte recalculaba la caja por su cuenta (sumaba ventas con
+             tarjeta al esperado, contaba dos veces las anulaciones y tomaba
+             ventas de otros cierres). Ahora usa el mismo cálculo del arqueo. */
+          const tc = Views.cash.totals(c);
+          const totalVentas = tc.total, efVentas = tc.efectivoVentas, transf = tc.transferencias;
+          const otrosMedios = tc.otrosMedios, ingresos = tc.ingresos, egresos = tc.egresos;
+          const esperadoCalc = c.estado==='cerrada' ? (c.esperado||0) : tc.esperado;
           return {apertura:c.apertura, cierre:c.cierre, responsable:(DB.user(c.userId)||{}).nombre||'—',
             base:c.base, totalVentas, efectivo:efVentas, transferencia:transf, otrosMedios:Math.max(0,otrosMedios),
             ingresos, egresos, esperado:esperadoCalc, contado:c.contado||0,
@@ -12406,6 +12687,171 @@ Views.audit = {
     aq.oninput = Util.debounce(() => { State.filters.aud.q = aq.value; Router.render(); }, 220);
     document.querySelector('[data-x]').onclick = () => Reports.csv('auditoria', DB.d.audit.map(a=>({
       fecha:a.fecha, usuario:a.usuario, rol:a.rol, accion:a.accion, detalle:a.detalle})));
+  }
+};
+
+/* ==========================================================================
+   FASE 1 · CONTROL DIARIO
+   Revisión automática del dinero de un rango de fechas. No modifica nada por
+   sí solo: muestra lo que no cuadra, con el motivo y el documento, para que
+   el administrador lo revise. Sirve para dos cosas: detectar a tiempo
+   cualquier falla nueva y depurar lo que dejaron las fallas H1–H9.
+   ========================================================================== */
+Views.control = {
+  _f:null,
+  filtro(){ return this._f || (this._f = {desde:Util.today(), hasta:Util.today()}); },
+  enRango(fecha){ const f = this.filtro(), d = (fecha||'').slice(0,10); return d >= f.desde && d <= f.hasta; },
+  revisar(){
+    const T = Reglas.TOL;
+    const ventas = (DB.d.sales||[]).filter(s => this.enRango(s.fecha));
+    const pagadas = ventas.filter(s => s.estado === 'pagada');
+    const ordenes = (DB.d.orders||[]);
+    const R = {duplicadas:[], descuadre:[], cambio:[], lineas:[], huerfanos:[], dobleCierre:[], comandaInflada:[], cierres:[]};
+    // 1. Más de una factura pagada para la misma comanda
+    const porOrden = {};
+    pagadas.forEach(s => {
+      const ords = ordenes.filter(o => o.id === s.orderId || (o.saleId && o.saleId === s.id));
+      ords.forEach(o => { (porOrden[o.id] = porOrden[o.id] || {o, v:[]}).v.push(s); });
+    });
+    Object.values(porOrden).forEach(x => { const u = Array.from(new Set(x.v)); if (u.length > 1) R.duplicadas.push({o:x.o, v:u}); });
+    pagadas.forEach(s => {
+      // 2. Total que no sale de sus platos
+      const sub = Money.items(s.items);
+      if (Math.abs(sub - Money.n(s.subtotal)) > T || Math.abs(Money.totalVenta(s) - Money.n(s.total)) > T)
+        R.descuadre.push({s, sub, calc:Money.totalVenta(s)});
+      // 3. Cambio registrado como efectivo (ya corregido en los cálculos)
+      const bruto = (s.pagos||[]).reduce((a,p)=>a+Money.n(p.monto),0);
+      if (bruto - Money.n(s.total) > T) R.cambio.push({s, bruto});
+      // 4. Líneas repetidas dentro de la factura
+      if (Reglas.lidsRepetidos(s.items).length) R.lineas.push({doc:'Factura ' + s.numero, id:s.id, n:Reglas.lidsRepetidos(s.items).length});
+      // 6. Venta que las versiones anteriores contaban en dos cierres
+      if (s.domTurnoId && !s.cajaId && (DB.d.cash||[]).some(c => s.fecha >= c.apertura && (!c.cierre || s.fecha <= c.cierre)))
+        R.dobleCierre.push({s});
+    });
+    ordenes.filter(o => this.enRango(o.fecha)).forEach(o => {
+      if (Reglas.lidsRepetidos(o.items).length) R.lineas.push({doc:'Comanda ' + o.numero, id:o.id, n:Reglas.lidsRepetidos(o.items).length});
+      // 7. Comanda cobrada cuyos platos no coinciden con su factura
+      if (o.estado === 'cobrada' && o.ventaId){
+        const v = (DB.d.sales||[]).find(x => x.id === o.ventaId);
+        if (v && v.estado === 'pagada' && Math.abs(Money.items(o.items) - Money.items(v.items)) > T)
+          R.comandaInflada.push({o, v, comanda:Money.items(o.items), factura:Money.items(v.items)});
+      }
+    });
+    // 5. Domicilio "pendiente" cuya comanda ya se cobró o canceló
+    ventas.filter(s => s.estado !== 'pagada' && s.estado !== 'anulada' && !s.anulada && s.tipo === 'domicilio').forEach(s => {
+      const o = ordenes.find(x => x.saleId === s.id);
+      if (o && (o.estado === 'cobrada' || o.estado === 'cancelada' || o.estado === 'eliminada')) R.huerfanos.push({s, o});
+    });
+    // 8. Cierres de caja: lo que se guardó al cerrar vs el cálculo corregido
+    (DB.d.cash||[]).filter(c => c.estado === 'cerrada' && this.enRango(c.apertura)).forEach(c => {
+      const t = Views.cash.totals(c);
+      R.cierres.push({c, guardado:Money.n(c.esperado), actual:t.esperado, contado:Money.n(c.contado)});
+    });
+    return R;
+  },
+  total(R){
+    return R.duplicadas.length + R.descuadre.length + R.lineas.length + R.huerfanos.length +
+           R.comandaInflada.length + R.cierres.filter(x => Math.abs(x.guardado - x.actual) > 1).length;
+  },
+  html(){
+    const f = this.filtro(), R = this.revisar(), n = this.total(R), esAdmin = Auth.can('admin');
+    const ver = id => '<button class="btn sm ghost" data-cv="' + id + '">Ver factura</button>';
+    const sec = (titulo, explica, cols, filas, vacio) =>
+      '<div class="card pad0" style="margin-top:14px"><div class="card-h"><h3>' + titulo + '</h3>' +
+        '<span class="badge ' + (filas.length ? 'bad' : 'ok') + ' right">' + filas.length + '</span></div>' +
+        '<p class="dim" style="font-size:12px;line-height:1.5;margin:10px 16px 0">' + explica + '</p>' +
+        UI.table(cols, filas, {emptyTitle:'Sin novedades', emptyMsg:vacio||'Todo cuadra en este rango.'}) + '</div>';
+    return '<div class="view-head"><div><div class="eyebrow">Revisión automática del dinero · versión ' + APP_VER + '</div>' +
+        '<h2>Control diario</h2></div></div>' +
+      '<div class="card" style="margin-bottom:14px"><div class="row wrap" style="gap:10px">' +
+        '<label class="f" style="margin:0">Desde<input class="inp" type="date" id="ctl-desde" value="' + Util.esc(f.desde) + '"></label>' +
+        '<label class="f" style="margin:0">Hasta<input class="inp" type="date" id="ctl-hasta" value="' + Util.esc(f.hasta) + '"></label>' +
+        '<span class="right"></span>' +
+        '<button class="btn sm" id="ctl-hoy">Hoy</button><button class="btn sm" id="ctl-mes">Últimos 30 días</button>' +
+      '</div></div>' +
+      '<div class="grid g-kpi">' +
+        UI.kpi('Novedades a revisar', String(n), n ? 'requieren revisión del administrador' : 'todo cuadra en el rango') +
+        UI.kpi('Facturas duplicadas', String(R.duplicadas.length), 'misma comanda cobrada más de una vez') +
+        UI.kpi('Pendientes huérfanos', String(R.huerfanos.length), 'domicilios que ya se cobraron en Comandas') +
+      '</div>' +
+      sec('1 · Comandas con más de una factura pagada',
+        'La misma comanda quedó cobrada en varias facturas. Conserve una y anule las demás desde "Ver factura" (la anulación devuelve inventario y queda en Auditoría).',
+        [{t:'Comanda'},{t:'Facturas'},{t:'Total cobrado',n:1},{t:'',n:1}],
+        R.duplicadas.map(x => '<tr><td class="num">' + Util.esc(x.o.numero) + '</td><td class="num">' +
+          x.v.map(v => Util.esc(v.numero) + ' (' + Util.money(v.total) + ')').join('<br>') + '</td>' +
+          '<td class="n">' + Util.money(x.v.reduce((a,v)=>a+Money.n(v.total),0)) + '</td>' +
+          '<td class="n">' + x.v.map(v => ver(v.id)).join(' ') + '</td></tr>')) +
+      sec('2 · Facturas cuyo total no sale de sus platos',
+        'El subtotal o el total guardado no coincide con la suma de los platos, descuentos, impuesto, propina y domicilio.',
+        [{t:'Factura'},{t:'Fecha'},{t:'Subtotal guardado',n:1},{t:'Suma de platos',n:1},{t:'Total guardado',n:1},{t:'',n:1}],
+        R.descuadre.map(x => '<tr><td class="num">' + Util.esc(x.s.numero) + '</td><td>' + Util.dt(x.s.fecha) + '</td>' +
+          '<td class="n">' + Util.money(x.s.subtotal) + '</td><td class="n">' + Util.money(x.sub) + '</td>' +
+          '<td class="n">' + Util.money(x.s.total) + '</td><td class="n">' + ver(x.s.id) + '</td></tr>')) +
+      sec('3 · Comandas cobradas con platos de más',
+        'La comanda cerrada tiene más valor en platos que su factura: rastro de la duplicación al cobrar (H1/H2).',
+        [{t:'Comanda'},{t:'Factura'},{t:'Platos en comanda',n:1},{t:'Platos en factura',n:1},{t:'',n:1}],
+        R.comandaInflada.map(x => '<tr><td class="num">' + Util.esc(x.o.numero) + '</td><td class="num">' + Util.esc(x.v.numero) + '</td>' +
+          '<td class="n">' + Util.money(x.comanda) + '</td><td class="n">' + Util.money(x.factura) + '</td><td class="n">' + ver(x.v.id) + '</td></tr>')) +
+      sec('4 · Platos repetidos',
+        'Una misma línea aparece dos veces dentro de una factura o una comanda.',
+        [{t:'Documento'},{t:'Líneas repetidas',n:1}],
+        R.lineas.map(x => '<tr><td>' + Util.esc(x.doc) + '</td><td class="n">' + x.n + '</td></tr>')) +
+      sec('5 · Domicilios "pendientes" que ya se cobraron',
+        'Factura de Domicilios que quedó viva aunque su comanda se cobró o canceló en Comandas. Inflaba "Pedidos hoy" y podía cobrarse de nuevo. ' +
+          (esAdmin ? 'Anularla no toca inventario ni caja: nunca se cobró.' : 'Solo un administrador puede anularla.'),
+        [{t:'Pendiente'},{t:'Cliente'},{t:'Valor',n:1},{t:'Comanda'},{t:'Factura real'},{t:'',n:1}],
+        R.huerfanos.map(x => '<tr><td class="num">' + Util.esc(x.s.numero) + '</td><td>' + Util.esc((x.s.entrega||{}).nombre||'—') + '</td>' +
+          '<td class="n">' + Util.money(x.s.total) + '</td><td class="num">' + Util.esc(x.o.numero) + ' · ' + Util.esc(x.o.estado) + '</td>' +
+          '<td class="num">' + Util.esc(x.o.numeroVenta||'—') + '</td>' +
+          '<td class="n">' + (esAdmin ? '<button class="btn sm ghost" data-chuerf="' + x.s.id + '" style="color:var(--ember-hi)">Anular pendiente</button>' : '') + '</td></tr>')) +
+      sec('6 · Cierres de caja: guardado vs cálculo corregido',
+        'Lo que el sistema le pidió entregar a la cajera al cerrar, frente a lo que da el cálculo corregido (solo efectivo, sin cambio devuelto ni domicilios de otro turno). La diferencia muestra cuánto sumaba de más.',
+        [{t:'Apertura'},{t:'Responsable'},{t:'Esperado al cerrar',n:1},{t:'Esperado corregido',n:1},{t:'Contado',n:1},{t:'Sumaba de más',n:1}],
+        R.cierres.map(x => { const d = x.guardado - x.actual;
+          return '<tr><td>' + Util.dt(x.c.apertura) + '</td><td>' + Util.esc((DB.user(x.c.userId)||{}).nombre||'—') + '</td>' +
+            '<td class="n">' + Util.money(x.guardado) + '</td><td class="n">' + Util.money(x.actual) + '</td>' +
+            '<td class="n">' + Util.money(x.contado) + '</td>' +
+            '<td class="n"><span class="badge ' + (Math.abs(d) <= 1 ? 'ok' : 'bad') + '">' + Util.money(d) + '</span></td></tr>'; }),
+        'No hay cierres de caja en el rango.') +
+      sec('7 · Pagos con cambio registrado como efectivo (informativo)',
+        'Se digitó el billete recibido en vez del valor. Ya NO afecta los cierres: el sistema descuenta el cambio automáticamente.',
+        [{t:'Factura'},{t:'Total',n:1},{t:'Registrado',n:1},{t:'Cambio',n:1}],
+        R.cambio.map(x => '<tr><td class="num">' + Util.esc(x.s.numero) + '</td><td class="n">' + Util.money(x.s.total) + '</td>' +
+          '<td class="n">' + Util.money(x.bruto) + '</td><td class="n">' + Util.money(x.bruto - Money.n(x.s.total)) + '</td></tr>')) +
+      sec('8 · Domicilios que se contaban en dos cierres (informativo)',
+        'Cobrados en un turno de domicilios y, en versiones anteriores, sumados también a la caja. Ya se cuentan solo en su turno.',
+        [{t:'Factura'},{t:'Fecha'},{t:'Valor',n:1}],
+        R.dobleCierre.map(x => '<tr><td class="num">' + Util.esc(x.s.numero) + '</td><td>' + Util.dt(x.s.fecha) + '</td><td class="n">' + Util.money(x.s.total) + '</td></tr>'));
+  },
+  mount(){
+    const f = this.filtro();
+    const d = document.getElementById('ctl-desde'), h = document.getElementById('ctl-hasta');
+    if (d) d.onchange = () => { f.desde = d.value || Util.today(); Router.render(); };
+    if (h) h.onchange = () => { f.hasta = h.value || Util.today(); Router.render(); };
+    const hoy = document.getElementById('ctl-hoy');
+    if (hoy) hoy.onclick = () => { f.desde = f.hasta = Util.today(); Router.render(); };
+    const mes = document.getElementById('ctl-mes');
+    if (mes) mes.onclick = () => { f.desde = Util.daysAgo(29).toISOString().slice(0,10); f.hasta = Util.today(); Router.render(); };
+    document.querySelectorAll('[data-cv]').forEach(b => b.onclick = () => Ticket.open(b.dataset.cv));
+    document.querySelectorAll('[data-chuerf]').forEach(b => b.onclick = () => this.anularHuerfano(b.dataset.chuerf));
+  },
+  /** Anula una factura de Domicilios que quedó "pendiente" aunque su comanda
+      ya se cobró o canceló. Nunca se cobró: no toca inventario ni caja. */
+  async anularHuerfano(id){
+    if (!Auth.can('admin')) return UI.toast('Solo un administrador puede hacerlo.','warn');
+    const s = (DB.d.sales||[]).find(x => x.id === id); if (!s || s.estado === 'pagada') return;
+    const o = (DB.d.orders||[]).find(x => x.saleId === s.id);
+    if (!(await UI.confirm('Se anulará la factura pendiente ' + s.numero + ' por ' + Util.money(s.total) +
+      '. Su comanda ' + ((o||{}).numero||'') + ' ya está ' + ((o||{}).estado||'') + '. No mueve inventario ni caja.',
+      {ok:'Anular pendiente', danger:true}))) return;
+    s.estado = 'anulada'; s.anulada = true; s.anuladaEn = Util.now(); s.anuladaPor = (Auth.user||{}).id;
+    s.motivoAnulacion = 'Control diario: duplicado de ' + ((o||{}).numeroVenta || 'comanda ' + ((o||{}).numero||''));
+    s.act = Util.now();
+    DB.touch('sales');
+    Sync.enqueue('sales','update', s);
+    DB.log('control:anular-pendiente', s.numero + ' · ' + Util.money(s.total) + ' · ' + s.motivoAnulacion, s.id);
+    UI.toast('Pendiente ' + s.numero + ' anulada.','ok');
+    Router.render();
   }
 };
 
