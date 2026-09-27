@@ -2292,6 +2292,44 @@ const Sync = {
   },
   pending(){ return DB.d.queue.length; },
 
+  /** Ventas realmente pendientes de que el servidor las confirme: las que
+      tienen una operación esperando en la cola. Aparte se informan las que
+      arrastran la marca vieja (bajaron del servidor o son anteriores a
+      configurarlo), que no son trabajo pendiente y se sanean solas en la
+      siguiente puesta al día. */
+  /** Desglose de cuántos registros tiene este equipo por colección, para
+      entender de dónde sale una diferencia con el total del servidor.
+      El servidor solo informa un total (en /salud), así que lo que se puede
+      afirmar por colección es el conteo local y si esa colección quedó
+      marcada como "el servidor no la guarda". */
+  diferenciaDetalle(){
+    const filas = this.COLECCIONES.map(k => ({
+      coleccion: k,
+      local: (DB.d[k]||[]).length,
+      noGuarda: !!this.noGuarda[k]
+    })).filter(x => x.local > 0).sort((a,b) => b.local - a.local);
+    const local = this.contarLocal();
+    const servidor = (Equipo.info && typeof Equipo.info.registros === 'number') ? Equipo.info.registros : null;
+    const sinGuardar = filas.filter(f => f.noGuarda).reduce((a,f)=>a+f.local, 0);
+    const enCola = (DB.d.queue||[]).length;
+    return {filas, local, servidor, diferencia: servidor == null ? null : local - servidor, sinGuardar, enCola};
+  },
+
+  ventasPendientes(){
+    const ventas = DB.d.sales || [];
+    if (!this.activo()) return {n:0, viejas:0};
+    const enCola = new Set();
+    (DB.d.queue||[]).forEach(op => {
+      if (op && op.entidad === 'sales' && op.payload && op.payload.id != null) enCola.add(op.payload.id);
+    });
+    let n = 0, viejas = 0;
+    ventas.forEach(v => {
+      if (enCola.has(v.id)) n++;
+      else if (!v.sync) viejas++;
+    });
+    return {n, viejas};
+  },
+
   async run(silent){
     /* ── Ningún aviso se puede perder ──────────────────────────────────
        El servidor avisa en cuanto alguien escribe. Si ese aviso llega
@@ -2549,21 +2587,35 @@ const Sync = {
     if (!Array.isArray(lista) || !lista.length) return 0;
     const col = DB.d[entidad];
     if (!Array.isArray(col)) return 0;
+    /* CORRECCIÓN: una venta que VIENE del servidor está, por definición,
+       confirmada allá. Antes solo se encendía la marca de confirmación a las
+       ventas que habían salido de la cola de ESTE equipo, así que las que
+       bajaban del servidor (o las de antes de configurarlo) se quedaban
+       marcadas como "sin confirmar" para siempre, y el contador de la
+       pantalla de Sincronización crecía sin parar aunque no hubiera nada
+       pendiente. */
+    const confirmar = (r) => { if (entidad === 'sales' && r && !r.sync) r.sync = true; return r; };
     const idx = new Map();
     col.forEach((r, i) => { if (r && r.id != null) idx.set(r.id, i); });
     let n = 0;
     lista.forEach(r => {
       if (!r || r.id == null) return;
       const i = idx.get(r.id);
-      if (i === undefined){ idx.set(r.id, col.length); col.push(r); n++; return; }
+      if (i === undefined){ idx.set(r.id, col.length); col.push(confirmar(r)); n++; return; }
       /* Lo de fábrica sin tocar cede siempre. Su fecha se sella al abrir la
          aplicación, así que ganaría el último-en-escribir-gana y dejaría a la
          tablet mostrando los perfiles de la plantilla en vez de los del
          restaurante. */
-      if (this.deFabrica(entidad, col[i])){ col[i] = r; n++; return; }
+      if (this.deFabrica(entidad, col[i])){ col[i] = confirmar(r); n++; return; }
+      /* Si lo de aquí es mejor y vuelve a la cola, NO está confirmado: el
+         servidor tiene una copia atrasada y hay que reenviarla. */
       if (this.retrocede(entidad, col[i], r)) return;
       // Fuera de ese caso, solo pisa lo local si lo del servidor es más reciente.
-      if (!col[i].act || (r.act||'') > col[i].act){ col[i] = Object.assign({}, col[i], r); n++; }
+      if (!col[i].act || (r.act||'') > col[i].act){ col[i] = confirmar(Object.assign({}, col[i], r)); n++; }
+      /* Y si no gana ninguno, el servidor igual tiene esa venta: queda
+         confirmada aunque no haya nada que actualizar. Este era el caso más
+         común de marcas viejas. */
+      else confirmar(col[i]);
     });
     if (n) DB.touch(entidad);
     return n;
@@ -2755,7 +2807,11 @@ const Sync = {
           const s = remoto.get(r.id);
           if (!s) subir.push({entidad:k, op:'create', payload:r});
           else if ((r.act||'') > (s.act||'')) subir.push({entidad:k, op:'update', payload:r});
-          else return;
+          else {
+            /* El servidor ya la tiene igual o más nueva: está confirmada. */
+            if (k === 'sales' && !r.sync){ r.sync = true; DB.touch('sales'); }
+            return;
+          }
           (this._empujado[k] = this._empujado[k] || []).push(r.id);
         });
       });
@@ -12708,7 +12764,7 @@ Views.sync = {
             '<div class="grow" style="min-width:200px">' +
               '<div class="eyebrow" style="margin-bottom:8px">Agregar una tablet o un celular</div>' +
               '<ol class="pasos-n">' +
-                '<li>Abre la cámara y apunta al código de al lado.</li>' +
+                '<li>Conecta la tablet o el celular a la misma red del local.</li>' +
                 '<li>Abre la cámara y apunta al código de al lado.</li>' +
                 '<li>Toca la dirección que aparece y sigue el asistente.</li>' +
               '</ol>' +
@@ -12732,7 +12788,15 @@ Views.sync = {
       (State.filters.syncAvz ?
         '<div class="grid g-kpi" style="margin-bottom:14px">' +
           UI.kpi('Operaciones en cola', String(q.length), 'Se conservan hasta confirmarse') +
-          UI.kpi('Ventas sin confirmar', String(DB.d.sales.filter(x=>!x.sync).length), 'Guardadas en este equipo') +
+          /* Lo pendiente de verdad es lo que está en la cola esperando al
+             servidor, no una marca que pudo quedarse vieja. */
+          (function(){
+            const pd = Sync.ventasPendientes();
+            return UI.kpi('Ventas sin confirmar', String(pd.n),
+              pd.n ? 'Esperando respuesta del servidor' : (pd.viejas
+                ? pd.viejas + ' con marca antigua · se corrige al poner al día'
+                : 'Todo confirmado'));
+          })() +
           UI.kpi('Aviso en vivo', Sync.enVivo ? 'Conectado' : 'Reconectando',
                  Sync.enVivo ? 'El servidor avisa al instante' : 'Mientras tanto se consulta cada 20 s') +
           UI.kpi('Registros', Sync.contarLocal().toLocaleString('es-CO') +
@@ -12747,7 +12811,8 @@ Views.sync = {
           '<div class="row wrap" style="gap:9px">' +
             '<button class="btn gold" id="sRec">Poner al día ahora</button>' +
             '<button class="btn" id="sPub">Publicar mis datos al servidor</button>' +
-            '<button class="btn" id="sJoin">Traer los datos del servidor</button></div>' +
+            '<button class="btn" id="sJoin">Traer los datos del servidor</button>' +
+            '<button class="btn" id="sDif">Revisar diferencia con el servidor</button></div>' +
           '<p class="dim" style="font-size:11.5px;margin-top:9px">Normalmente no hace falta tocar nada: al abrir la dirección ' +
             'el equipo se pone al día solo y sigue al día mientras esté abierto. ' +
             '<b>Poner al día ahora</b> repite esa revisión sin borrar nada de este aparato. ' +
@@ -12790,6 +12855,51 @@ Views.sync = {
 
     /* Repite a mano la misma revisión que corre sola al abrir: fusiona lo del
        servidor con lo de aquí y encola lo que allá falte. No borra nada. */
+    bind('sDif', async () => {
+      await Equipo.resolver();                 // refresca el conteo del servidor
+      const d = Sync.diferenciaDetalle();
+      const linea = (a, b, fuerte) => '<div class="row" style="justify-content:space-between;padding:3px 0">' +
+        '<span' + (fuerte ? ' style="font-weight:700"' : '') + '>' + a + '</span>' +
+        '<b class="num">' + b + '</b></div>';
+      UI.modal({title:'Diferencia con el servidor', size:'',
+        body:
+          linea('Registros en este equipo', d.local.toLocaleString('es-CO'), true) +
+          linea('Registros en el servidor', d.servidor == null ? 'sin respuesta' : d.servidor.toLocaleString('es-CO'), true) +
+          (d.diferencia == null ? '' :
+            linea(d.diferencia > 0 ? 'De más en este equipo' : (d.diferencia < 0 ? 'De más en el servidor' : 'Iguales'),
+                  Math.abs(d.diferencia).toLocaleString('es-CO'), true)) +
+          '<hr style="border:0;border-top:1px solid var(--line);margin:10px 0">' +
+          '<div class="eyebrow" style="margin-bottom:6px">Qué hay en este equipo</div>' +
+          '<div class="tbl-wrap"><table><thead><tr><th>Colección</th><th class="n">Registros</th><th>Estado</th></tr></thead><tbody>' +
+          d.filas.map(f => '<tr><td>' + Util.esc(f.coleccion) + '</td>' +
+            '<td class="n">' + f.local.toLocaleString('es-CO') + '</td>' +
+            '<td>' + (f.noGuarda
+              ? '<span class="badge warn">el servidor no la guarda</span>'
+              : '<span class="badge ok">se sincroniza</span>') + '</td></tr>').join('') +
+          '</tbody></table></div>' +
+          '<p class="dim" style="font-size:11.5px;line-height:1.55;margin-top:11px">' +
+            (d.enCola
+              ? 'Hay <b>' + d.enCola + '</b> operación(es) esperando en la cola: la diferencia debería bajar al enviarlas. '
+              : 'La cola está vacía, así que no hay nada de este equipo esperando a subir. ') +
+            (d.sinGuardar
+              ? 'De los registros de aquí, <b>' + d.sinGuardar.toLocaleString('es-CO') + '</b> están en colecciones que el ' +
+                'servidor no conserva; esa parte de la diferencia es normal y no se va a cerrar. '
+              : '') +
+            'Ten en cuenta que la reconciliación solo baja datos cuando el servidor va adelante: si este equipo tiene de ' +
+            'más, esos registros suben por la cola, y lo que no suba se queda solo aquí.</p>',
+        footer:'<button class="btn" data-close>Cerrar</button>' +
+               '<button class="btn gold" id="difSubir">Poner al día ahora</button>',
+        onMount(ov, close){
+          ov.querySelector('#difSubir').onclick = async () => {
+            close();
+            await Sync.puestaAlDia();
+            await Sync.comprobarHuella(true);
+            Router.render();
+            UI.toast('Revisión enviada. Vuelve a abrir el diagnóstico para ver cómo quedó.','ok', 4200);
+          };
+        }
+      });
+    });
     bind('sRec', async () => {
       UI.toast('Revisando contra el servidor…','info');
       const r = await Sync.hidratar({});
