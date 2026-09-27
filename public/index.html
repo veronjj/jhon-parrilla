@@ -12187,7 +12187,7 @@ const Reports = {
       {k:'responsable',t:'Responsable'},{k:'valor',t:'Valor',n:1,f:'$'}],
       build(v, from, to){ return (DB.d.gastos||[])
         .filter(g => !g.borrado && g.fecha.slice(0,10) >= from && g.fecha.slice(0,10) <= to)
-        .map(g => ({fecha:g.fecha, concepto:g.concepto, metodo:g.metodo||'Efectivo',
+        .map(g => ({_uid:g.userId, fecha:g.fecha, concepto:g.concepto, metodo:g.metodo||'Efectivo',
           responsable:(DB.user(g.userId)||{}).nombre || '—', valor:g.valor||0}))
         .sort((a,b) => a.fecha < b.fecha ? 1 : -1); }},
     caja:{t:'Caja', cols:[
@@ -12207,7 +12207,7 @@ const Reports = {
           const totalVentas = tc.total, efVentas = tc.efectivoVentas, transf = tc.transferencias;
           const otrosMedios = tc.otrosMedios, ingresos = tc.ingresos, egresos = tc.egresos;
           const esperadoCalc = c.estado==='cerrada' ? (c.esperado||0) : tc.esperado;
-          return {apertura:c.apertura, cierre:c.cierre, responsable:(DB.user(c.userId)||{}).nombre||'—',
+          return {_uid:c.userId, apertura:c.apertura, cierre:c.cierre, responsable:(DB.user(c.userId)||{}).nombre||'—',
             base:c.base, totalVentas, efectivo:efVentas, transferencia:transf, otrosMedios:Math.max(0,otrosMedios),
             ingresos, egresos, esperado:esperadoCalc, contado:c.contado||0,
             diferencia:(c.contado||0)-(esperadoCalc)};
@@ -12218,7 +12218,7 @@ const Reports = {
       {k:'costo',t:'Costo',n:1,f:'$'}],
       build(v, from, to){ return DB.meals()
         .filter(m => m.fecha.slice(0,10) >= from && m.fecha.slice(0,10) <= to)
-        .map(m => ({fecha:m.fecha, persona:(DB.user(m.userId)||{}).nombre || m.userNombre || '—',
+        .map(m => ({_uid:m.userId, _uid2:m.registroId, fecha:m.fecha, persona:(DB.user(m.userId)||{}).nombre || m.userNombre || '—',
           rol:ROL_LABEL[m.rol] || m.rol || '—', carne:m.carneNombre, nota:m.nota||'',
           registro:m.registroNombre||'', costo:m.costo||0}))
         .sort((a,b) => a.fecha < b.fecha ? 1 : -1); }},
@@ -12226,7 +12226,7 @@ const Reports = {
       {k:'fecha',t:'Fecha',f:'dt'},{k:'tipo',t:'Tipo'},{k:'concepto',t:'Concepto'},{k:'usuario',t:'Registró'},{k:'monto',t:'Monto',n:1,f:'$'}],
       build(v, from, to){ const out = [];
         DB.d.cash.forEach(c=>c.movs.forEach(m=>{ const d = m.fecha.slice(0,10);
-          if (d>=from && d<=to) out.push({fecha:m.fecha, tipo:m.tipo, concepto:m.concepto,
+          if (d>=from && d<=to) out.push({_uid:m.userId, fecha:m.fecha, tipo:m.tipo, concepto:m.concepto,
             usuario:(DB.user(m.userId)||{}).nombre||'—', monto:m.monto}); }));
         return out.sort((a,b)=>a.fecha<b.fecha?1:-1); }}
   },
@@ -12239,11 +12239,47 @@ const Reports = {
     if (f === 'd') return Util.date(v);
     return String(v);
   },
+  /** Reportes que se pueden acotar a una persona. Los que listan catálogos
+      (clientes, inventario, empleados) o compras a proveedores no tienen a
+      quién atribuirles, y se muestran completos aunque haya alguien elegido. */
+  USUARIO_APLICA:{ventas:1, productos:1, utilidad:1, domiciliarios:1,
+                  gastos:1, caja:1, alimentacion:1, movimientos:1},
+
+  /** Las personas que pueden filtrarse, agrupadas por rol. */
+  personasFiltro(){
+    return DB.users().filter(u => u.activo !== false)
+      .map(u => ({id:u.id, nombre:u.nombre, rol:u.rol, rotulo:ROL_LABEL[u.rol] || u.rol || '—'}))
+      .sort((a,b) => a.rotulo === b.rotulo
+        ? a.nombre.localeCompare(b.nombre,'es')
+        : a.rotulo.localeCompare(b.rotulo,'es'));
+  },
+
+  /** Ventas en las que participó una persona: quien atendió, quien cobró y
+      el mesero de la comanda de la que salió la factura. Un mesero no cobra,
+      así que buscarlo solo por el dueño de la venta lo dejaría siempre en
+      cero. */
+  ventasDe(ventas, uid){
+    if (!uid) return ventas;
+    const deSuComanda = new Set();
+    (DB.d.orders||[]).forEach(o => { if (o.meseroId === uid && o.ventaId) deSuComanda.add(o.ventaId); });
+    return ventas.filter(s => s.userId === uid || s.cobradoPor === uid || deSuComanda.has(s.id));
+  },
+
   current(){
     const f = State.filters.rep || (State.filters.rep = {tipo:'ventas', from:Util.daysAgo(6).toISOString().slice(0,10), to:Util.today()});
+    if (f.userId === undefined) f.userId = '';
     const def = this.defs[f.tipo];
-    const ventas = Metrics.between(f.from, f.to);
-    return {f, def, data:def.build(ventas, f.from, f.to), ventas};
+    const aplica = !!(f.userId && this.USUARIO_APLICA[f.tipo]);
+    const todas = Metrics.between(f.from, f.to);
+    /* Los reportes que salen de ventas quedan filtrados de raíz. */
+    const ventas = aplica ? this.ventasDe(todas, f.userId) : todas;
+    let data = def.build(ventas, f.from, f.to);
+    /* Los que salen de otra colección traen marcado su dueño en _uid. */
+    if (aplica) data = data.filter(r =>
+      (r._uid === undefined && r._uid2 === undefined) ||
+      r._uid === f.userId || r._uid2 === f.userId);
+    return {f, def, data, ventas, aplicaUsuario: aplica,
+            ignoraUsuario: !!f.userId && !this.USUARIO_APLICA[f.tipo]};
   },
   csv(nombre, data, cols){
     if (!data.length) return UI.toast('No hay datos para exportar en este periodo.','warn');
@@ -12532,9 +12568,8 @@ Views.reports = {
            '<button class="btn gold" data-x="pdf">PDF</button>';
   },
   html(){
-    const {f, def, data, ventas} = Reports.current();
+    const {f, def, data, ventas, ignoraUsuario} = Reports.current();
     const t = Metrics.totals(ventas);
-    const util = t.total - t.imp - t.prop - t.dom - t.costo;
     const TOPE = 300;
     /* INTERVENCIÓN: en la sección Ventas, el orden pasa a mostrar primero
        el registro más reciente y va desplazándose hacia atrás (de más
@@ -12553,21 +12588,36 @@ Views.reports = {
     if (tot) rows.push('<tr class="fila-total">' + def.cols.map((c,i) =>
       '<td class="' + (c.n?'n':'') + '">' + (i===0 ? 'TOTAL · ' + data.length + ' registros'
         : (tot[c.k] !== undefined ? Util.esc(Reports.fmt(tot[c.k], c.f)) : '')) + '</td>').join('') + '</tr>');
-    return '<div class="view-head"><div><div class="eyebrow">Periodo ' + Util.date(f.from) + ' — ' + Util.date(f.to) + '</div>' +
+    const persona = f.userId ? (DB.user(f.userId)||{}).nombre : '';
+    return '<div class="view-head"><div><div class="eyebrow">Periodo ' + Util.date(f.from) + ' — ' + Util.date(f.to) +
+      (persona && !ignoraUsuario ? ' · ' + Util.esc(persona) : '') + '</div>' +
       '<h2>Reportes</h2></div></div>' +
       '<div class="card" style="margin-bottom:14px"><div class="row wrap">' +
         '<label class="f">Desde<input class="inp" type="date" id="rf" value="' + f.from + '"></label>' +
         '<label class="f">Hasta<input class="inp" type="date" id="rt" value="' + f.to + '"></label>' +
+        /* Filtro por persona: cajeros, meseros y administración. */
+        '<label class="f">Persona<select class="inp" id="ru" style="min-width:190px">' +
+          '<option value="">Todas las personas</option>' +
+          Reports.personasFiltro().map(u =>
+            '<option value="' + u.id + '"' + (f.userId === u.id ? ' selected' : '') + '>' +
+            Util.esc(u.nombre) + ' · ' + Util.esc(u.rotulo) + '</option>').join('') +
+        '</select></label>' +
         '<div class="chips wrap grow">' + Object.entries(Reports.defs).map(([k,d]) =>
           '<button class="chip ' + (f.tipo===k?'on':'') + '" data-r="' + k + '">' + d.t + '</button>').join('') + '</div>' +
       '</div>' +
       '<div class="row wrap" style="margin-top:10px;gap:8px">' +
         ['hoy','7','30','mes'].map(p=>'<button class="btn sm" data-q="' + p + '">' +
           ({hoy:'Hoy','7':'7 días','30':'30 días',mes:'Mes actual'})[p] + '</button>').join('') + '</div></div>' +
+      (ignoraUsuario
+        ? '<div class="card" style="margin-bottom:14px;padding:10px 14px">' +
+          '<div class="dim" style="font-size:12px;line-height:1.5">El reporte <b>' + Util.esc(def.t) +
+          '</b> no se puede atribuir a una persona, así que se muestra completo. ' +
+          'El filtro por persona aplica en Ventas, Productos, Utilidad, Domiciliarios, Gastos, Caja, ' +
+          'Alimentación y Movimientos.</div></div>'
+        : '') +
       '<div class="grid g-kpi" style="margin-bottom:14px">' +
         UI.kpi('Facturado', Util.money(t.total), t.n + ' tickets del periodo') +
         UI.kpi('Descuentos', Util.money(t.desc), 'Aplicados sobre ' + Util.money(t.bruto)) +
-        UI.kpi('Utilidad estimada', Util.money(util), 'Después de costo, impuesto y propina') +
         UI.kpi('Ticket promedio', Util.money(t.n ? t.total/t.n : 0), 'Propinas: ' + Util.money(t.prop)) +
       '</div>' +
       '<div class="card pad0"><div class="card-h"><h3>' + def.t + '</h3>' +
@@ -12583,6 +12633,8 @@ Views.reports = {
     const f = State.filters.rep;
     document.getElementById('rf').onchange = e => { f.from = e.target.value; Router.render(); };
     document.getElementById('rt').onchange = e => { f.to = e.target.value; Router.render(); };
+    const ru = document.getElementById('ru');
+    if (ru) ru.onchange = e => { f.userId = e.target.value || ''; Router.render(); };
     document.querySelectorAll('[data-r]').forEach(b => b.onclick = () => { f.tipo = b.dataset.r; Router.render(); });
     document.querySelectorAll('[data-q]').forEach(b => b.onclick = () => {
       const p = b.dataset.q;
