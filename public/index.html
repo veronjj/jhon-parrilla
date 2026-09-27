@@ -630,6 +630,22 @@ tr.fila-total td{border-top:1.5px solid var(--brass-dim);font-weight:700;color:v
 .mesa-card{background:var(--char-850);border:1px solid var(--line-soft);border-radius:var(--r-lg);padding:14px;
   display:flex;flex-direction:column;gap:10px}
 .mesa-card.on{border-color:var(--brass-dim)}
+/* Lo que sale del local (domicilio o para llevar) se distingue de un vistazo
+   del salón. Se usa el mismo lenguaje de color que ya tiene la Cocina en
+   .kcard.llevar, para que las dos pantallas digan lo mismo. Solo cambian el
+   borde y el fondo: ningún color de texto se toca, así que nada pierde
+   contraste ni se vuelve ilegible. */
+.mesa-card.llevar{border-color:var(--ember-hi);
+  background:linear-gradient(180deg,rgba(214,67,48,.13),var(--char-850) 62%);
+  box-shadow:0 0 0 1px var(--ember-dim),0 12px 30px -18px var(--ember)}
+/* Estar "listo" no le quita el distintivo de que sale del local. */
+.mesa-card.llevar.on{border-color:var(--ember-hi)}
+/* Franja superior con el tipo de pedido, como la de las comandas de cocina. */
+.mesa-card .mc-tipo{display:flex;align-items:center;gap:6px;align-self:flex-start;
+  padding:3px 10px;border-radius:999px;font-size:10.5px;font-weight:800;
+  letter-spacing:.1em;text-transform:uppercase;
+  background:rgba(214,67,48,.22);color:var(--ember-hi);border:1px solid var(--ember-hi)}
+.mesa-card .mc-tipo svg{width:13px;height:13px;stroke-width:2}
 
 /* ── Responsive ──────────────────────────────────────────────────────── */
 #tabbar{display:none}
@@ -8417,9 +8433,16 @@ Views.orders = {
          pero también sirve el consecutivo de la comanda o el mesero. */
       const busca = (o.tipo && o.tipo !== 'mesa' ? (POS.TIPOS[o.tipo]||{corto:o.tipo}).corto : 'mesa ' + o.mesa) +
         ' ' + (o.mesa||'') + ' ' + (o.numero||'') + ' ' + ((DB.user(o.meseroId)||{}).nombre||'');
-      return '<div class="mesa-card ' + (o.estado==='listo'?'on':'') + '" data-busca="' + Util.esc(busca) + '">' +
+      const saleDelLocal = !!(o.tipo && o.tipo !== 'mesa');
+      const tipoInfo = saleDelLocal ? (POS.TIPOS[o.tipo] || {corto:o.tipo, ico:'pos'}) : null;
+      return '<div class="mesa-card ' + (o.estado==='listo'?'on':'') + (saleDelLocal?' llevar':'') +
+        '" data-busca="' + Util.esc(busca) + '">' +
+        /* La franja no repite el título a secas: cuando hay cargo de domicilio
+           lo lleva, igual que la comanda de cocina. */
+        (saleDelLocal ? '<span class="mc-tipo">' + Util.ico(tipoInfo.ico) + Util.esc(tipoInfo.corto) +
+          (o.domicilio ? ' · ' + Util.money(o.domicilio) : '') + '</span>' : '') +
         '<div class="row"><div><div style="font-family:var(--serif);font-size:19px">' +
-          (o.tipo && o.tipo !== 'mesa' ? Util.esc(POS.TIPOS[o.tipo].corto) : 'Mesa ' + Util.esc(o.mesa)) + '</div>' +
+          (saleDelLocal ? Util.esc(tipoInfo.corto) : 'Mesa ' + Util.esc(o.mesa)) + '</div>' +
         '<div class="dim num" style="font-size:11px">' + Util.esc(o.numero) + ' · ' + min + ' min · ' +
         Util.esc(((DB.user(o.meseroId)||{}).nombre||'').split(' ')[0]) + '</div></div>' +
         '<span class="badge ' + est.b + ' right" style="font-size:15px;font-weight:800;padding:8px 14px;letter-spacing:.07em;text-transform:uppercase;min-width:100px;text-align:center">' + est.t + '</span></div>' +
