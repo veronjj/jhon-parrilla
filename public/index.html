@@ -2136,12 +2136,15 @@ const DB = {
     if (!m) return '';
     return m.nombre + (m.tipo === 'bebida' && m.presentacion ? ' · ' + m.presentacion : '');
   },
-  log(accion, detalle, ref){
-    this.d.audit.unshift({
+  log(accion, detalle, ref, extra){
+    /* `extra` es opcional: campos estructurados que acompañan al texto, para
+       que después se puedan sumar o filtrar sin tener que leer la frase.
+       Las llamadas que no lo pasan guardan exactamente lo mismo que antes. */
+    this.d.audit.unshift(Object.assign({
       id:Util.uid('a'), fecha:Util.now(), userId:(Auth.user||{}).id||null,
       usuario:(Auth.user||{}).nombre||'sistema', rol:(Auth.user||{}).rol||'—',
       accion, detalle:detalle||'', ref:ref||null
-    });
+    }, extra || {}));
     if (this.d.audit.length > 1200) this.d.audit.length = 1200;
     this.touch('audit');
   }
@@ -10198,6 +10201,7 @@ Views.inv = {
     return (sobran ? '<button class="btn" data-act="limpiar">' + Util.ico('warn') +
         '<span>Limpiar ' + sobran + '</span></button>' : '') +
       '<button class="btn gold" data-act="conteo">' + Util.ico('chk') + '<span>Conteo rápido</span></button>' +
+      '<button class="btn" data-act="ingresos">' + Util.ico('clock') + '<span>Últimos ingresos</span></button>' +
       '<button class="btn" data-act="imp">' + Util.ico('down') + '<span>Importar</span></button>' +
       '<button class="btn" data-act="exp">Exportar</button>' +
       '<button class="btn pri" data-act="new">' + Util.ico('plus') + '<span>Nuevo</span></button>';
@@ -10205,6 +10209,101 @@ Views.inv = {
 
   consumo(meatId, dias){
     return DB.consumoDesde(Util.daysAgo((dias||7)-1).toISOString().slice(0,10)).get(meatId) || 0;
+  },
+
+  /** INTERVENCIÓN · Entradas de mercancía al inventario, agrupadas por quien
+      las registró. Al inventario solo le entra producto por tres caminos, y
+      los tres se leen aquí para que la lista no esconda ninguno:
+        · Compra  — DB.d.purchases, con proveedor y valor pagado.
+        · Ajuste  — "Ajustar" con cantidad positiva (la negativa es merma).
+        · Conteo  — un conteo físico que encontró MÁS de lo que decía el
+                    sistema; también es producto que entró.
+      Solo lee: no toca existencias, ni compras, ni la bitácora. */
+  ingresos(){
+    const lista = [];
+    DB.purchases().forEach(c => {
+      const cant = Number(c.gramos) || 0;
+      if (cant <= 0) return;
+      lista.push({
+        userId: c.userId || null,
+        cuando: c.act || (c.fecha && c.fecha.length <= 10 ? c.fecha + 'T12:00:00' : c.fecha) || '',
+        origen: 'Compra', meatId: c.meatId, cantidad: cant, valor: Number(c.total) || 0,
+        detalle: [c.proveedor ? 'Proveedor: ' + c.proveedor : '', c.factura ? 'Factura ' + c.factura : '', c.nota || '']
+          .filter(Boolean).join(' · ')
+      });
+    });
+    (DB.d.audit || []).forEach(a => {
+      if (a.accion !== 'inventario:ajuste' && a.accion !== 'inventario:conteo') return;
+      const cant = Number(a.cantidad);
+      /* Sin el dato numérico (bitácora anterior a este cambio) no se puede
+         saber si fue entrada o salida: se deja fuera en vez de adivinar. */
+      if (!isFinite(cant) || cant <= 0) return;
+      lista.push({
+        userId: a.userId || null, cuando: a.fecha || '',
+        origen: a.accion === 'inventario:conteo' ? 'Conteo' : 'Ajuste',
+        meatId: a.meatId || a.ref, cantidad: cant, valor: 0,
+        detalle: [a.motivo && a.motivo !== 'conteo' ? 'Motivo: ' + a.motivo : '', a.nota || ''].filter(Boolean).join(' · ')
+      });
+    });
+    lista.sort((x, y) => String(y.cuando || '').localeCompare(String(x.cuando || '')));
+    return lista;
+  },
+  /** Los ingresos agrupados por persona, con los `n` más recientes de cada
+      una (3 por defecto) y el total que esa persona ha registrado. */
+  ingresosPorPersona(n){
+    n = n || 3;
+    const porPersona = new Map();
+    this.ingresos().forEach(r => {
+      const k = r.userId || '_sin';
+      if (!porPersona.has(k))
+        porPersona.set(k, {userId:r.userId, nombre:(DB.user(r.userId)||{}).nombre || 'Sin identificar',
+                           rol:(DB.user(r.userId)||{}).rol || '', total:0, ultimos:[], ultima:r.cuando});
+      const g = porPersona.get(k);
+      g.total++;
+      if (g.ultimos.length < n) g.ultimos.push(r);
+    });
+    return Array.from(porPersona.values())
+      .sort((a, b) => String(b.ultima || '').localeCompare(String(a.ultima || '')));
+  },
+  verIngresos(){
+    const grupos = this.ingresosPorPersona(3);
+    const BADGE = {Compra:'ok', Ajuste:'info', Conteo:'warn'};
+    const cantidad = r => {
+      const m = DB.meat(r.meatId);
+      return m ? Util.cantIns(r.cantidad, m) : (r.cantidad + '');
+    };
+    const nombreIns = r => { const m = DB.meat(r.meatId); return m ? DB.rotulo(m) : 'Insumo retirado'; };
+    const cuerpo = !grupos.length
+      ? UI.empty('Todavía no hay ingresos registrados',
+          'Al registrar una compra o un ajuste hacia arriba, aparecerá aquí con el nombre de quien lo hizo.')
+      : grupos.map(g =>
+        '<div class="card" style="margin-top:12px">' +
+          '<div class="row" style="justify-content:space-between;gap:10px;align-items:baseline">' +
+            '<div><b>' + Util.esc(g.nombre) + '</b>' +
+              (g.rol ? ' <span class="dim" style="font-size:11.5px">· ' + Util.esc(ROL_LABEL[g.rol] || g.rol) + '</span>' : '') +
+            '</div>' +
+            '<span class="dim" style="font-size:11.5px;white-space:nowrap">' + g.total +
+              ' ingreso' + (g.total === 1 ? '' : 's') + ' en total</span>' +
+          '</div>' +
+          UI.table([{t:'Fecha'},{t:'Origen'},{t:'Insumo'},{t:'Cantidad',n:1},{t:'Valor',n:1}],
+            g.ultimos.map(r =>
+              '<tr><td style="white-space:nowrap">' + Util.esc(Util.dt(r.cuando)) + '</td>' +
+              '<td><span class="badge ' + (BADGE[r.origen] || 'info') + '">' + Util.esc(r.origen) + '</span></td>' +
+              '<td>' + Util.esc(nombreIns(r)) +
+                (r.detalle ? '<div class="dim" style="font-size:11px">' + Util.esc(r.detalle) + '</div>' : '') + '</td>' +
+              '<td class="n">' + Util.esc(cantidad(r)) + '</td>' +
+              '<td class="n">' + (r.valor ? Util.money(r.valor) : '—') + '</td></tr>')) +
+        '</div>').join('');
+    UI.modal({
+      title:'Últimos ingresos al inventario por persona', size:'lg',
+      body:'<p class="dim" style="font-size:12.5px;line-height:1.55;margin:0">' +
+        'Los 3 movimientos más recientes de cada persona que ha metido producto al inventario: ' +
+        'compras registradas, ajustes hacia arriba y conteos que encontraron de más. ' +
+        'Las mermas y los ajustes hacia abajo no son ingresos y no aparecen aquí.</p>' +
+        cuerpo,
+      footer:'<button class="btn" data-close>Cerrar</button>'
+    });
+    DB.log('inventario:ingresos-consulta', grupos.length + ' persona(s) con ingresos registrados');
   },
   /** Días que alcanza al ritmo de la última semana. */
   alcance(m, c7){
@@ -10351,6 +10450,7 @@ Views.inv = {
     bind('limpiar', () => this.limpiarPreparados());
     bind('imp', () => Importar.abrir('cortes'));
     bind('conteo', () => this.conteo());
+    bind('ingresos', () => this.verIngresos());
     bind('exp', () => Reports.csv('inventario', DB.meats().map(m => ({
       nombre:m.nombre, tipo:m.tipo||'carne', presentacion:m.presentacion||'',
       cantidad:m.gramos, minimo:m.minimo, costo_unitario:m.costoGramo}))));
@@ -10433,7 +10533,8 @@ Views.inv = {
           cambios.forEach(({m, antes, nuevo}) => {
             m.gramos = nuevo; m.act = Util.now();
             DB.log('inventario:conteo', m.nombre + ' \u00b7 ' + Util.cantIns(antes, m) + ' \u2192 ' +
-              Util.cantIns(nuevo, m) + ' \u00b7 autorizó ' + autorizo.nombre, m.id);
+              Util.cantIns(nuevo, m) + ' \u00b7 autorizó ' + autorizo.nombre, m.id,
+              {meatId:m.id, cantidad:nuevo - antes, motivo:'conteo'});
             Sync.enqueue('meats','update', m);
           });
           DB.touch('meats');
@@ -10577,7 +10678,10 @@ Views.inv = {
         m.gramos = Math.max(0, m.gramos + d.gramos); m.act = Util.now();
         DB.touch('meats');
         DB.log('inventario:ajuste', m.nombre + ' · ' + (d.gramos>0?'+':'') + Util.cantIns(d.gramos, m) + ' · ' + d.motivo +
-          (d.nota?' · '+d.nota:'') + (autorizo && autorizo.nombre ? ' · autorizó ' + autorizo.nombre : ''), m.id);
+          (d.nota?' · '+d.nota:'') + (autorizo && autorizo.nombre ? ' · autorizó ' + autorizo.nombre : ''), m.id,
+          /* La cantidad viaja como número para que "Últimos ingresos" pueda
+             distinguir una entrada de una merma sin leer la frase. */
+          {meatId:m.id, cantidad:Number(d.gramos)||0, motivo:d.motivo||'', nota:d.nota||''});
         Sync.enqueue('meats','adjust', m);
         close(); UI.toast(m.nombre + ': ' + Util.cantIns(antes, m) + ' → ' + Util.cantIns(m.gramos, m),'ok'); Router.render();
       }
