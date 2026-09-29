@@ -1829,7 +1829,7 @@ const DB = {
   _flush:null,
   async saveBucket(b){
     const pack = {}; this.BUCKETS[b].forEach(k => pack[k] = this.d[k]);
-    await Persist.set('jp_'+b, pack);
+    return await Persist.set('jp_'+b, pack);
   },
   async saveAll(){ for (const b of Object.keys(this.BUCKETS)) await this.saveBucket(b); },
 
@@ -1999,6 +1999,8 @@ const DB = {
       Sync.enqueue('meats','update', m);
     });
     v.inventarioAplicado = true;
+    /* Se guarda lo realmente descontado: devolverVenta lo usa tal cual. */
+    v.consumoInv = consumo;
     this.touch('meats');
     return consumo;
   },
@@ -2007,7 +2009,14 @@ const DB = {
     /* Sólo se salta si consta que NUNCA se descontó. Las ventas viejas no
        traen la marca y sí se habían descontado, así que se devuelven. */
     if (!v || v.inventarioAplicado === false) return null;
-    const consumo = this.consumoDeVenta(v);
+    /* AUDITORÍA CRUZADA: se devuelve EXACTAMENTE lo que se descontó, tomado
+       de la venta. Recalcularlo con la receta ACTUAL del plato devolvía
+       cantidades distintas si alguien editó los insumos extra después de
+       vender, y no devolvía nada de ellos si el plato se había borrado.
+       Las ventas anteriores a este cambio no traen el dato y se recalculan
+       como siempre. */
+    const consumo = (v.consumoInv && typeof v.consumoInv === 'object')
+      ? v.consumoInv : this.consumoDeVenta(v);
     Object.entries(consumo).forEach(([mid, g]) => {
       const m = this.meat(mid); if (!m) return;
       m.gramos = (Number(m.gramos)||0) + g; m.act = Util.now();
@@ -2021,6 +2030,19 @@ const DB = {
   openOrders(){ return this.orders().filter(o => this.ABIERTAS.includes(o.estado)); },
   order(id){ return this.byId('orders').get(id); },
   ordersOf(mesa){ return this.openOrders().filter(o=>o.mesa===mesa); },
+  /** AUDITORÍA CRUZADA · comandas abiertas de una mesa que pertenecen a la
+      JORNADA EN CURSO. 'listo' y 'entregado' cuentan como abiertas, así que
+      una comanda que nunca se cobró seguía siendo "la comanda de esa mesa"
+      para siempre: el plato nuevo se le pegaba encima y el tiquete salía con
+      el pedido de otro día. El corte es la apertura de la caja —la jornada
+      real del negocio, que puede cruzar la medianoche— y, sin caja abierta,
+      las últimas 12 horas. Así una mesa que sigue ocupada a la 1 a.m. no se
+      parte en dos comandas. */
+  ordersVigentes(mesa){
+    const c = this.openCash();
+    const corte = (c && c.apertura) ? c.apertura : new Date(Date.now() - 12*3600000).toISOString();
+    return this.ordersOf(mesa).filter(o => (o.fecha||'') >= corte);
+  },
   /** AUDITORÍA 2026-09 · H1: toda línea de comanda debe tener un `lid` fijo.
       Las comandas nacidas en Domicilios (y las antiguas) no lo traían, y
       POS.pendientesComanda() trataba cada línea sin lid como "pendiente":
@@ -2161,7 +2183,23 @@ DB._flushYa = async function(){
     do{
       DB._otraVez = false;
       const list = Array.from(DB._dirty); DB._dirty.clear();
-      for (const b of list) await DB.saveBucket(b);
+      /* AUDITORÍA CRUZADA (pérdida silenciosa de datos): _dirty se vaciaba
+         ANTES de escribir y nadie miraba si la escritura funcionó. Un disco
+         lleno, una IndexedDB desalojada o una transacción abortada devolvían
+         false y el dato se quedaba solo en memoria: la jornada parecía
+         guardada y al recargar no estaba. Ahora el bucket que falla vuelve a
+         la lista de pendientes y se avisa una vez. */
+      let fallo = false;
+      for (const b of list){
+        const ok = await DB.saveBucket(b);
+        if (ok === false){ DB._dirty.add(b); fallo = true; }
+      }
+      if (fallo && !DB._avisoDisco){
+        DB._avisoDisco = true;
+        DB.log('sistema:disco', 'No se pudo escribir en el almacenamiento local');
+        try { UI.toast('Este equipo no está logrando guardar en disco. No cierres la aplicación: ' +
+          'exporta un respaldo desde Equipo y revisa el espacio del dispositivo.','bad', 14000); } catch(e){}
+      }
     } while (DB._otraVez);
   } finally { DB._flushando = false; }
 };
@@ -2521,6 +2559,14 @@ const Sync = {
     if (entidad === 'config'){
       if (!DB.d.config.act || (data.act||'') > DB.d.config.act){
         const local = {endpoint:DB.d.config.endpoint};   // el endpoint es propio de cada tablet
+        /* AUDITORÍA CRUZADA: los consecutivos NUNCA pueden retroceder. La
+           config viaja completa, así que una tablet con el contador más bajo
+           lo imponía al resto y las siguientes facturas repetían números ya
+           emitidos (JP00103…JP00110 otra vez). Se conserva siempre el mayor
+           de los dos, así el contador solo avanza. */
+        ['consecutivo','comandaSeq'].forEach(k => {
+          local[k] = Math.max(Number(DB.d.config[k])||0, Number(data[k])||0);
+        });
         DB.d.config = Object.assign({}, DB.d.config, data, local);
         DB.touch('config');
       }
@@ -3122,6 +3168,16 @@ const Auth = {
     const u = DB.user(userId);
     if (!u || !u.activo) return {ok:false, msg:'Usuario inactivo o inexistente.'};
     if (!(await this.verificar(u, pin))) return {ok:false, msg:'PIN incorrecto. Intenta de nuevo.'};
+    /* Nadie hereda el pedido de otro: si entra una persona distinta de la que
+       dejó el estado en memoria, se descarta lo que quedó a medias. */
+    if (this._duenoEstado && this._duenoEstado !== u.id){
+      let quedo = 0;
+      try { quedo = (POS.cart||[]).length; POS.reset(); } catch(e){}
+      try { if (typeof Domicilios !== 'undefined') Domicilios.resetBorrador(); } catch(e){}
+      if (quedo) DB.log('sesion:estado-descartado',
+        'Entró ' + u.nombre + ' con ' + quedo + ' línea(s) en el carrito de otro usuario');
+    }
+    this._duenoEstado = u.id;
     this.user = u;
     this.since = Util.now();
     this.token = btoa(JSON.stringify({sub:u.id, rol:u.rol, iat:Date.now()})).slice(0,64);
@@ -3205,6 +3261,18 @@ const Auth = {
     clearInterval(Respaldo._timer);
     Sesion.limpiar();
     if (this.user) DB.log('sesion', motivo || 'Cierre de sesi\u00f3n');
+    /* ===== CAUSA RAÍZ · "se adicionan platos que no se seleccionaron" =====
+       El carrito, la mesa, la comanda abierta (POS.orderId) y el borrador de
+       domicilio viven en objetos globales y NO se limpiaban al salir. Quien
+       entraba después heredaba lo que el anterior había dejado a medias:
+       tocaba UN plato, enviaba a cocina, y la comanda salía con los platos
+       del otro — o peor, se pegaba a la comanda de la mesa que el otro tenía
+       abierta. Sesion.limpiar() solo borra lo guardado en disco; la memoria
+       seguía intacta, y Gate.submit → Auth.login no restaura nada.
+       Se anota de quién es el estado que queda en memoria: si vuelve la
+       misma persona (bloqueo por inactividad) lo conserva, y si entra otra
+       se descarta en Auth.login. */
+    this._duenoEstado = this.user ? this.user.id : null;
     this.user = null; this.token = null;
     clearInterval(this._timer);
     document.getElementById('app').classList.add('hide');
@@ -3497,7 +3565,31 @@ const Sesion = {
     Auth.watch();
 
     if (e.filtros) State.filters = e.filtros;
-    if (e.pos){
+    /* AUDITORÍA CRUZADA · el carrito guardado solo vale para el MISMO día de
+       operación y solo si su comanda sigue existiendo.
+       · Con el bloqueo automático desactivado (bloqueoMin = 0, que la propia
+         configuración ofrece) no había NINGUNA caducidad: la tablet se abría
+         al día siguiente con el carrito y la mesa del día anterior, y el
+         siguiente plato se sumaba ahí.
+       · Si la comanda que respaldaba el carrito ya no existe (se cobró, se
+         canceló o desapareció por sincronización), el código marcaba TODAS
+         las líneas como "nuevas": platos ya cobrados volvían al pedido. */
+    const _diaGuardado = (e.since || '').slice(0,10);
+    const _descartar = !!e.pos && (
+      (!!_diaGuardado && _diaGuardado !== Util.now().slice(0,10)) ||
+      (!!e.pos.orderId && !DB.order(e.pos.orderId))
+    );
+    if (_descartar){
+      const _n = (e.pos.cart||[]).length;
+      POS.reset();
+      DB.log('sesion:carrito-descartado', _n + ' línea(s) · ' +
+        (_diaGuardado !== Util.now().slice(0,10) ? 'pedido a medias de otro día' : 'su comanda ya no existe'));
+      if (_n) setTimeout(() => UI.toast(
+        'Se vació el pedido a medias que había quedado guardado: ' +
+        (_diaGuardado !== Util.now().slice(0,10) ? 'era de otro día.' : 'su comanda ya no está disponible.') +
+        ' Vuelve a tomar el pedido.','warn', 9000), 800);
+    }
+    if (e.pos && !_descartar){
       POS.cart = Array.isArray(e.pos.cart) ? e.pos.cart : [];
       POS.mesa = e.pos.mesa || '';
       POS.clienteId = DB.client(e.pos.clienteId) ? e.pos.clienteId : 'cl_1';
@@ -4761,6 +4853,11 @@ const Cobro = {
         if (extras.length) orden.items = (orden.items||[]).concat(extras);
         orden.estado = 'cobrada'; orden.ventaId = venta.id; orden.numeroVenta = venta.numero;
         orden.tiempos = Object.assign({}, orden.tiempos, {cobrado:venta.fecha});
+        /* Cierre real de la mesa: la comanda queda sellada con la factura que
+           la pagó. 'cobrada' no está en DB.ABIERTAS, así que sale de las
+           listas, del KDS y de DB.ordersOf(mesa) — la mesa queda libre y el
+           pedido anterior ya no puede arrastrarse a uno nuevo. */
+        orden.cerrada = true;
         orden.act = Util.now();
         venta.orderId = orden.id;
         Sync.enqueue('orders','update', orden);
@@ -6134,7 +6231,10 @@ const POS = {
 
         ov.querySelector('#tipoOk').onclick = () => {
           if (tipo === 'mesa'){
-            POS.mesa = (ov.querySelector('#tMesa').value||'').trim();
+            const mesaNueva = (ov.querySelector('#tMesa').value||'').trim();
+            // Igual que en askMesa: otra mesa es otra cuenta.
+            if (POS.orderId && mesaNueva !== POS.mesa){ POS.orderId = null; POS.modo = 'nuevo'; }
+            POS.mesa = mesaNueva;
             POS.tipo = 'mesa'; POS.domicilio = 0;
           } else {
             const min = Number(c.domicilioMin)||0, max = Number(c.domicilioMax)||Infinity;
@@ -6160,7 +6260,12 @@ const POS = {
   askMesa(despues){
     UI.formModal({title:'¿Para qué mesa?', size:'sm', ok:'Continuar',
       fields:[{k:'mesa', label:'Mesa', val:POS.mesa, req:true, full:true, ph:'Ej: 12, Terraza 3, Para llevar'}],
-      onSave(d, close){ POS.mesa = d.mesa; close(); Router.render(); if (despues) setTimeout(despues, 80); }});
+      onSave(d, close){
+        /* Cambiar de mesa desengancha la comanda que estuviera cargada. Sin
+           esto, el plato se enviaba a la comanda de la mesa ANTERIOR (o.mesa
+           no cambia) y el tiquete salía con el pedido de esa otra mesa. */
+        if (POS.orderId && d.mesa !== POS.mesa){ POS.orderId = null; POS.modo = 'nuevo'; }
+        POS.mesa = d.mesa; close(); Router.render(); if (despues) setTimeout(despues, 80); }});
   },
   /** Manda lo que hay en el carrito a la pantalla de cocina. No cobra ni descuenta inventario. */
   sendKitchen(){
@@ -6202,8 +6307,18 @@ const POS = {
        la hay, se usa esa (se le agrega la ronda) en vez de duplicarla —
        igual que ya se hace aquí mismo cuando sí se conoce el id. */
     if (!o && this.tipo === 'mesa' && this.mesa){
-      o = DB.asegurarLids(DB.ordersOf(this.mesa)[0] || null);
+      /* AUDITORÍA CRUZADA: solo se adopta una comanda abierta del MISMO día de
+         operación. 'entregado' y 'listo' cuentan como abiertas, así que una
+         comanda de ayer que nunca se cobró seguía siendo "la comanda de esa
+         mesa" para siempre: el plato nuevo se le pegaba encima y el tiquete
+         salía con el pedido de otro día y su total acumulado. */
+      const abiertas = DB.ordersOf(this.mesa);
+      const vigentes = DB.ordersVigentes(this.mesa);
+      o = DB.asegurarLids(vigentes[0] || null);
       if (o) this.orderId = o.id;
+      else if (abiertas.length)
+        UI.toast('La mesa ' + this.mesa + ' tiene ' + abiertas.length + ' comanda(s) de jornadas anteriores sin cobrar. ' +
+          'Se abre una comanda nueva; revisa las viejas en Comandas.','warn', 8000);
     }
     const ronda = o ? (Math.max(0, ...o.items.map(i=>i.ronda||1)) + 1) : 1;
     /* Una línea que YA está en la comanda no se vuelve a enviar. Pasa, por
@@ -6395,6 +6510,32 @@ const POS = {
           (nuevos.length ? ' Quedan ' + nuevos.length + ' plato(s) nuevo(s) en el pedido.' : ''),'bad', 7000);
       }
     }
+    /* ===== CAUSA RAÍZ · comanda duplicada al cobrar y volver a pedir =====
+       "Enviar a cocina" (sendKitchen) ya resolvía la comanda por NÚMERO DE
+       MESA cuando no conocía su id. Cobrar NO lo hacía: _commit tomaba la
+       comanda solo de this.orderId, y si estaba vacío —se cobró desde
+       Vender escribiendo la mesa, se restauró la sesión sin el id, o se
+       cobró desde otra pantalla— la factura se guardaba pero la comanda de
+       esa mesa nunca se marcaba como 'cobrada'. Quedaba ABIERTA, así que el
+       siguiente pedido de la misma mesa se le pegaba encima (sendKitchen la
+       reutiliza) y la mesa reaparecía con la comanda anterior y el valor
+       duplicado.
+
+       Se resuelve la comanda igual que al enviar a cocina, ANTES de armar
+       la cuenta: así el cobro siempre cierra la comanda que de verdad
+       existe, la mesa queda libre y el pedido anterior no puede arrastrarse.
+       Va antes de completarCuenta() para que la cuenta salga completa. */
+    if (!this.orderId && this.tipo === 'mesa' && this.mesa){
+      /* Solo comandas del MISMO día: adoptar una de ayer metería en esta
+         cuenta los platos de ayer (completarCuenta suma las rondas previas). */
+      const abiertas = DB.ordersVigentes(this.mesa);
+      if (abiertas.length){
+        this.orderId = abiertas[0].id;
+        if (abiertas.length > 1)
+          UI.toast('La mesa ' + this.mesa + ' tiene ' + abiertas.length + ' comandas abiertas. ' +
+            'Se cobra la ' + abiertas[0].numero + '; las demás quedan pendientes.','warn', 7000);
+      }
+    }
     /* Cobrar una comanda abierta es cobrarla completa: se suman primero los
        platos de las rondas anteriores que no estuvieran en el carrito. */
     /* El cargo de domicilio y el tipo de pedido se releen de la COMANDA justo
@@ -6576,6 +6717,13 @@ const POS = {
   commit(pagos, t){
     /* H5/H6: cerrojo de facturación y comanda todavía abierta. */
     if (this._facturando) return;
+    /* Red de seguridad: si por cualquier camino se llega aquí sin id de
+       comanda, se resuelve por mesa (ver la causa raíz en pay()), para que
+       una factura nunca deje viva la comanda de la mesa que acaba de pagar. */
+    if (!this.orderId && this.tipo === 'mesa' && this.mesa){
+      const ab = DB.ordersVigentes(this.mesa)[0];
+      if (ab) this.orderId = ab.id;
+    }
     const ordenPrevia = this.orderId ? DB.order(this.orderId) : null;
     if (ordenPrevia && !DB.ABIERTAS.includes(ordenPrevia.estado)){
       this.reset(); Router.render();
@@ -6763,12 +6911,22 @@ const Domicilios = {
       dos pertenece, y la otra ve su resumen en ceros. El cobro, en cambio,
       ocurre una sola vez y en un turno concreto. */
   turnoDeCobro(venta){
-    const propio = DB.openDomTurno((Auth.user||{}).id);
-    if (propio) return propio;
-    // Si quien cobra no lleva turno (la caja, por ejemplo), se imputa al turno
-    // abierto de quien tomó el pedido, que es quien responde por ese dinero.
-    const deQuienTomo = venta && venta.userId ? DB.openDomTurno(venta.userId) : null;
-    return deQuienTomo || null;
+    /* DECISIÓN DEL NEGOCIO (2026-09-28): el dinero de los domicilios NO es
+       una cuenta aparte. Domicilios y Caja son un solo circuito: todo lo
+       que se cobra entra al total de quien está en la caja y se liquida en
+       el cierre de caja. El turno de domicilios conserva su historial
+       —cuántos pedidos, cuáles, quién los despachó y por cuánto— pero no
+       liquida dinero por separado.
+
+       Devolver null es, precisamente, lo que hace que Cobro.finalizar le
+       ponga a la venta el cajaId de la caja abierta y cree su movimiento
+       en el cajón. */
+    if (DB.openCash()) return null;
+    /* Sin ninguna caja abierta la venta quedaría sin dueño y no entraría en
+       ningún cierre: como respaldo se imputa al turno de domicilios de quien
+       cobra o, si no tiene, al de quien tomó el pedido. */
+    return DB.openDomTurno((Auth.user||{}).id) ||
+      (venta && venta.userId ? DB.openDomTurno(venta.userId) : null) || null;
   },
 
   /** Turno de domicilios al que pertenece una venta ANTIGUA (sin marcas). */
@@ -6779,13 +6937,19 @@ const Domicilios = {
   turnoTotals(t){
     const ventas = DB.paid().filter(s => {
       if (s.tipo !== 'domicilio') return false;
-      // Marcada al cobrar: no hay nada que deducir.
+      // Marcada a un turno concreto al cobrar (histórico): manda la marca.
       if (s.domTurnoId) return s.domTurnoId === t.id;
-      // H4: cobrada y liquidada en una caja: no es de este turno.
-      if (s.cajaId) return false;
-      /* Ventas anteriores a que existiera la marca. Se resuelven como antes,
-         por encargada y ventana, para que el historial siga cuadrando. */
-      return s.userId === t.userId && s.fecha >= t.apertura && (!t.cierre || s.fecha <= t.cierre);
+      const enVentana = s.fecha >= t.apertura && (!t.cierre || s.fecha <= t.cierre);
+      if (!enVentana) return false;
+      /* El dinero se liquida en la CAJA, pero el turno conserva su historial:
+         TODO domicilio despachado mientras el turno estuvo abierto, sin
+         importar quién tomó el pedido —lo puede tomar una mesera y cobrarlo
+         la caja—. Antes se descartaban por traer cajaId y el resumen del
+         turno salía en ceros. */
+      if (s.cajaId) return true;
+      /* Venta antigua sin ninguna marca: se resuelve como siempre, por
+         encargada, para que el historial anterior siga cuadrando igual. */
+      return s.userId === t.userId;
     });
     const porMetodo = Metrics.byPayment(ventas);
     const efectivo = porMetodo['Efectivo'] || 0;
@@ -6794,7 +6958,24 @@ const Domicilios = {
     const otros = Math.max(0, total - efectivo - transferencia);
     const egresos = (DB.d.gastos||[]).filter(g => !g.borrado && g.userId === t.userId &&
       g.fecha >= t.apertura && (!t.cierre || g.fecha <= t.cierre)).reduce((a,g)=>a+(Number(g.valor)||0), 0);
-    return { ventas, cantidad: ventas.length, efectivo, transferencia, otros, total, ingresos: total, egresos };
+    /* Separado por DÓNDE se liquida, para que nadie entregue dos veces la
+       misma plata: lo que lleva cajaId ya está en el cajón de la caja; lo
+       que no (ventas de antes de este cambio) lo entrega la encargada. */
+    const enCaja = ventas.filter(x => !!x.cajaId);
+    const propias = ventas.filter(x => !x.cajaId);
+    const efectivoDe = lista => Metrics.byPayment(lista)['Efectivo'] || 0;
+    const totalEnCaja = enCaja.reduce((a,x)=>a+(x.total||0), 0);
+    return { ventas, cantidad: ventas.length, efectivo, transferencia, otros, total,
+             ingresos: total, egresos,
+             enCaja: enCaja.length, totalEnCaja, efectivoEnCaja: efectivoDe(enCaja),
+             aEntregar: efectivoDe(propias), totalPropias: propias.reduce((a,x)=>a+(x.total||0), 0) };
+  },
+  /** Nombre del domiciliario que despachó una venta. */
+  despachadoPor(s){
+    const id = s && s.entrega && s.entrega.domiciliarioId;
+    if (!id) return 'Sin asignar';
+    const d = (DB.d.domiciliarios||[]).find(x => x.id === id);
+    return (d && d.nombre) || 'Sin asignar';
   },
 
   /** Contexto del día de un turno, para explicar un resumen en ceros: cuánto
@@ -6868,7 +7049,7 @@ Views.domicilios = {
           '</div>' +
         '</div>' +
         '<div class="grid g-kpi" style="padding:14px 16px 16px">' +
-          UI.kpi('Domicilios del turno', String(tt.cantidad), 'facturados por ' + Util.esc((DB.user(miUserId)||{}).nombre||'—')) +
+          UI.kpi('Domicilios del turno', String(tt.cantidad), 'despachados en el turno de ' + Util.esc((DB.user(miUserId)||{}).nombre||'—')) +
           UI.kpi('Efectivo', Util.money(tt.efectivo), 'cobrado en efectivo') +
           UI.kpi('Transferencias', Util.money(tt.transferencia), 'Nequi, Daviplata, transferencia') +
           UI.kpi('Total del turno', Util.money(tt.total), 'suma de domicilios cobrados') +
@@ -7159,10 +7340,32 @@ Views.domicilios = {
       linea('Egresos (gastos de la encargada)', -tt.egresos) +
       '<hr>' +
       linea('TOTAL DEL TURNO', tt.total, {grande:true, mt:'6px'}) +
-      /* H9: lo que la encargada entrega en la mano es solo el efectivo; lo
-         demás ya está en el banco. Antes el tiquete solo mostraba el total. */
-      linea('EFECTIVO A ENTREGAR', tt.efectivo, {grande:true, mt:'6px'}) +
+      /* El dinero de los domicilios se liquida en la CAJA, no aquí. Este
+         tiquete es el historial del turno. Solo se imprime un "efectivo a
+         entregar" por las ventas anteriores a este cambio, que sí quedaron
+         a cargo de la encargada — así nadie entrega dos veces lo mismo. */
+      (tt.totalEnCaja
+        ? '<div style="font-size:10.5px;line-height:1.5;border:1px dashed #000;padding:5px 6px;margin:5px 0">' +
+          '<b>El dinero de estos domicilios está en la CAJA.</b><br>' +
+          tt.enCaja + ' de ' + tt.cantidad + ' pedido(s), por ' + Util.money(tt.totalEnCaja) +
+          ', se liquidan en el cierre de caja. Este resumen es el historial del turno, ' +
+          'no una entrega de dinero aparte.</div>'
+        : '') +
+      (tt.aEntregar ? linea('EFECTIVO A ENTREGAR', tt.aEntregar, {grande:true, mt:'6px'}) : '') +
       '<hr>' +
+      /* Historial del turno: qué se despachó y quién lo llevó. */
+      (tt.cantidad
+        ? '<div class="b" style="font-size:11px;margin:2px 0 3px">PEDIDOS DEL TURNO</div>' +
+          tt.ventas.slice().sort((a,b)=> (a.fecha||'') < (b.fecha||'') ? -1 : 1).map(v =>
+            '<div style="font-size:10.5px;margin-bottom:3px">' +
+              '<div style="display:flex;justify-content:space-between;gap:8px">' +
+                '<span>' + Util.time(v.fecha) + ' · ' + Util.esc(String(v.numero||'—')) + '</span>' +
+                '<b style="font-family:var(--mono)">' + Util.money(v.total) + '</b></div>' +
+              '<div>Despachó: ' + Util.esc(Domicilios.despachadoPor(v)) +
+                (v.domicilio ? ' · domicilio ' + Util.money(v.domicilio) : '') + '</div>' +
+            '</div>').join('') +
+          '<hr>'
+        : '') +
       /* Un tiquete lleno de ceros no puede salir sin decir por qué. Casi
          siempre es que el turno se abrió cuando la jornada ya iba corrida: los
          domicilios se cuentan desde la apertura, no hacia atrás. */
@@ -8927,10 +9130,21 @@ const Sales = {
     if (!v || v.estado !== 'pagada') return;
     DB.devolverVenta(v);
     const cli = DB.client(v.clienteId);
-    if (cli && !cli.sistema){ cli.visitas = Math.max(0, cli.visitas-1); cli.gastado = Math.max(0, cli.gastado - v.total); cli.act = Util.now(); }
+    if (cli && !cli.sistema){
+      cli.visitas = Math.max(0, cli.visitas-1); cli.gastado = Math.max(0, cli.gastado - v.total);
+      /* AUDITORÍA CRUZADA: los puntos se sumaban al cobrar y NO se devolvían
+         al anular, así que cada anulación regalaba puntos canjeables. Se
+         revierte con la misma fórmula del cobro. */
+      cli.puntos = Math.max(0, (Number(cli.puntos)||0) - Math.floor((Number(v.total)||0)/10000));
+      cli.act = Util.now();
+    }
     const caja = DB.openCash();
-    if (caja && (!v.cajaId || v.cajaId === caja.id) && !v.domTurnoId){
+    if (caja){
       const ef = Metrics.pagosNetos(v).filter(p=>p.metodo==='Efectivo').reduce((a,p)=>a+p.monto,0);
+      /* ¿Esta venta cuenta en el turno de ESTA caja? Se comprueba ahora, que
+         todavía está en DB.paid(); un par de líneas más abajo pasa a
+         'anulada' y desaparece de ahí. */
+      const deEstaCaja = DB.ventasDeCaja(caja).some(x => x.id === v.id);
       /* CORRECCIÓN DE RAÍZ (caja: doble descuento al anular una venta en efectivo):
          este movimiento queda en caja.movs SOLO como rastro visible en "Movimientos
          del turno" (para que se vea que hubo una anulación). Views.cash.totals()
@@ -8940,7 +9154,19 @@ const Sales = {
          y totals() la sumaba también dentro de "egresos", restando el valor de la
          venta anulada DOS VECES del efectivo esperado. Se marca con
          "reversionAnulacion" para que totals() la excluya de esa suma. */
-      if (ef) caja.movs.push({id:Util.uid('mv'), tipo:'egreso', fecha:Util.now(), concepto:'Anulación ' + v.numero, monto:-ef, metodo:'Efectivo', userId:(Auth.user||{}).id, reversionAnulacion:true});
+      /* AUDITORÍA CRUZADA (plata que salía del cajón sin quedar asentada):
+         antes solo se creaba el movimiento cuando la venta era de la caja
+         abierta. Al anular una factura de AYER —o de otro turno— el cliente
+         recibía su efectivo del cajón de hoy y no quedaba ningún asiento: al
+         cerrar aparecía un faltante sin explicación. Ahora siempre se
+         registra, y la marca 'reversionAnulacion' (que totals() excluye de
+         egresos) se pone SOLO cuando la venta sí contaba en este turno,
+         porque en ese caso el efectivo del turno ya baja solo al salir la
+         venta de DB.paid(). Si no contaba, es un egreso real del cajón. */
+      if (ef) caja.movs.push({id:Util.uid('mv'), tipo:'egreso', fecha:Util.now(),
+        concepto:'Anulación ' + v.numero + (deEstaCaja ? '' : ' (factura de otro turno)'),
+        monto:-ef, metodo:'Efectivo', userId:(Auth.user||{}).id, ventaId:v.id,
+        reversionAnulacion:deEstaCaja});
     }
     v.estado = 'anulada'; v.anuladaEn = Util.now(); v.anuladaPor = (Auth.user||{}).id; v.act = Util.now(); v.sync = false;
     DB.touch('sales','meats','clients','cash');
@@ -11655,12 +11881,13 @@ Views.gastos = {
         if (!d.valor || d.valor <= 0) return 'Indica un valor mayor a cero.';
         const gasto = {id:Util.uid('gs'), fecha:Util.now(), concepto:d.concepto, valor:Math.abs(d.valor),
           metodo:d.metodo, userId:(Auth.user||{}).id, cajaId:c.id, act:Util.now()};
+        /* El movimiento de caja guarda a QUÉ gasto pertenece (ver eliminar). */
         if (!DB.d.gastos) DB.d.gastos = [];
         DB.d.gastos.push(gasto);
         Sync.enqueue('gastos','create', gasto);
         /* Registrar como egreso en caja si es efectivo */
         if (d.metodo === 'Efectivo'){
-          c.movs.push({id:Util.uid('mv'), tipo:'egreso', fecha:Util.now(),
+          c.movs.push({id:Util.uid('mv'), tipo:'egreso', fecha:Util.now(), gastoId:gasto.id,
             concepto:'Gasto: ' + d.concepto, monto:-Math.abs(d.valor), metodo:'Efectivo', userId:(Auth.user||{}).id});
           c.act = Util.now();
           Sync.enqueue('cash','mov', c);
@@ -11680,7 +11907,20 @@ Views.gastos = {
     /* Si fue efectivo, quitar el egreso de caja */
     if (g.metodo === 'Efectivo'){
       const c = DB.d.cash.find(x => x.id === g.cajaId);
-      if (c){ c.movs = c.movs.filter(m => !(m.concepto === 'Gasto: ' + g.concepto && Math.abs(m.monto) === g.valor)); c.act = Util.now(); Sync.enqueue('cash','update', c); }
+      if (c){
+        /* AUDITORÍA CRUZADA: el filtro por concepto+valor borraba TODOS los
+           movimientos iguales. Dos gastos de "hielo $5.000" en el mismo turno
+           y al eliminar uno desaparecían los dos: el efectivo esperado subía
+           $5.000 y la cajera quedaba con un faltante falso. Ahora se quita el
+           movimiento de ESE gasto por su id; los movimientos viejos (sin id)
+           se resuelven quitando UNO SOLO que coincida. */
+        if (c.movs.some(m => m.gastoId === g.id)) c.movs = c.movs.filter(m => m.gastoId !== g.id);
+        else {
+          const ix = c.movs.findIndex(m => !m.gastoId && m.concepto === 'Gasto: ' + g.concepto && Math.abs(m.monto) === g.valor);
+          if (ix >= 0) c.movs.splice(ix, 1);
+        }
+        c.act = Util.now(); Sync.enqueue('cash','update', c);
+      }
     }
     /* Baja lógica, no borrado a secas. Ahora que los gastos viajan entre
        equipos, quitarlo de la lista sin dejar marca haría que volviera con
@@ -11772,6 +12012,241 @@ Views.cash = {
     return {ventas, porMetodo, efectivoVentas, transferencias, otrosMedios, ingresos, egresos, esperado,
             efectivoLiquidar, total, gastosTotal, gastosTransferencia};
   },
+  /** AUDITORÍA DEL TURNO (SOLO LECTURA · no cambia ningún cálculo)
+      Responde a una sola pregunta: "conté la plata a mano y no me da lo
+      mismo que el ticket, ¿dónde está la diferencia?".
+
+      El Resumen de Turno imprime SOLO lo que es de ESTA caja, porque cada
+      venta se liquida en un único cierre (H4: o la cobró un turno de
+      domicilios, o la cobró una caja, nunca las dos). El conteo manual, en
+      cambio, suele sumar TODO lo que pasó por el cajón durante el turno.
+      Esta auditoría pone las dos cifras lado a lado y nombra, factura por
+      factura, qué explica la diferencia y por qué motivo.
+
+      No toca nada: ni ventas, ni caja, ni gastos, ni inventario. Solo lee. */
+  auditoria(c){
+    const t = this.totals(c);
+    const desde = c.apertura || '';
+    const hasta = c.cierre || Util.now();
+    const dentro = f => { f = f || ''; return f >= desde && f <= hasta; };
+    /* El conteo manual se hace "del día", no "de la ventana del turno": por
+       eso la comparación recorre todo el día o días que toca el turno. */
+    const dias = new Set([(desde||'').slice(0,10), (hasta||'').slice(0,10)]);
+    const delDia = s => dias.has((s.fecha||'').slice(0,10));
+    const idsCaja = new Set(t.ventas.map(v => v.id));
+    const TR = {Transferencia:1, Nequi:1, Daviplata:1};
+    const nombre = id => (DB.user(id)||{}).nombre || '—';
+
+    const grupo = (titulo, motivo) => ({titulo, motivo, n:0, total:0, efectivo:0, transferencias:0, otros:0, filas:[]});
+    const sumar = (g, v, quien) => {
+      const pagos = Metrics.pagosNetos(v);
+      const ef = pagos.reduce((a,p)=> a + (p.metodo === 'Efectivo' ? p.monto : 0), 0);
+      const tr = pagos.reduce((a,p)=> a + (TR[p.metodo] ? p.monto : 0), 0);
+      const tot = Number(v.total) || 0;
+      g.n++; g.total += tot; g.efectivo += ef; g.transferencias += tr;
+      g.otros += Math.max(0, tot - ef - tr);
+      g.filas.push({numero:v.numero || '—', fecha:v.fecha, tipo:v.tipo || 'mesa',
+                    total:tot, efectivo:ef, transferencias:tr, quien:quien || '—'});
+    };
+
+    const gCaja  = grupo('Ventas de esta caja',
+      'Es exactamente lo que imprime el Resumen de Turno.');
+    const gDom   = grupo('Domicilios liquidados en turno de domicilios',
+      'Se cobraron dentro del turno de una encargada de domicilios, así que se liquidan en ESE cierre y no en la caja. Si ese dinero quedó en el cajón, el conteo manual lo incluye y el ticket no.');
+    const gOtra  = grupo('Cobradas en otra caja',
+      'Pertenecen a otro turno de caja abierto el mismo día.');
+    const gFuera = grupo('Cobradas el mismo día, fuera de este turno',
+      'La hora del cobro quedó antes de la apertura o después del cierre de esta caja.');
+    const gAnul  = grupo('Facturas anuladas',
+      'No suman en ningún total. Si su comanda en papel se contó a mano, sobra en el conteo manual.');
+    const gPend  = grupo('Facturas pendientes (sin cobrar)',
+      'Quedaron guardadas sin finalizar el cobro, así que no entran a ninguna caja.');
+
+    (DB.d.sales||[]).forEach(v => {
+      if (v.estado === 'pagada' && idsCaja.has(v.id)) return sumar(gCaja, v, nombre(v.cobradoPor || v.userId));
+      if (!delDia(v)) return;
+      if (v.estado === 'pagada'){
+        const tl = v.domTurnoId ? null : Domicilios.turnoLegacy(v);
+        if (v.domTurnoId || tl){
+          const td = v.domTurnoId ? (DB.d.domTurnos||[]).find(x => x.id === v.domTurnoId) : tl;
+          return sumar(gDom, v, nombre((td||{}).userId || v.userId));
+        }
+        if (v.cajaId && v.cajaId !== c.id){
+          const oc = (DB.d.cash||[]).find(x => x.id === v.cajaId);
+          return sumar(gOtra, v, nombre((oc||{}).userId));
+        }
+        return sumar(gFuera, v, nombre(v.cobradoPor || v.userId));
+      }
+      if (v.estado === 'anulada')   return sumar(gAnul, v, nombre(v.anuladaPor || v.userId));
+      if (v.estado === 'pendiente') return sumar(gPend, v, nombre(v.userId));
+    });
+
+    /* Comandas todavía abiertas. No son dinero cobrado y NUNCA se suman a
+       ningún total: se informan aparte porque sí aparecen cuando alguien
+       cuenta las comandas en papel. */
+    const comandas = DB.openOrders().filter(o => dias.has((o.fecha||'').slice(0,10))).map(o => ({
+      quees: (o.tipo && o.tipo !== 'mesa') ? ((POS.TIPOS[o.tipo]||{}).corto || o.tipo) : ('Mesa ' + (o.mesa || '—')),
+      valor: Money.comanda(o), estado: o.estado, quien: nombre(o.meseroId || o.userId), fecha: o.fecha
+    }));
+    const comandasTotal = comandas.reduce((a,x) => a + x.valor, 0);
+
+    /* Gastos del día pagados en el turno pero amarrados a otra caja: no
+       entran en la línea "Gastos" del ticket de esta caja. */
+    const gastosOtros = (DB.d.gastos||[]).filter(g => !g.borrado && dentro(g.fecha) &&
+      g.cajaId && g.cajaId !== c.id).reduce((a,g) => a + (Number(g.valor)||0), 0);
+
+    const fuera = [gDom, gOtra, gFuera];
+    const suma = k => gCaja[k] + fuera.reduce((a,g) => a + g[k], 0);
+    const cobradoTodo = {n:suma('n'), total:suma('total'), efectivo:suma('efectivo'),
+                         transferencias:suma('transferencias'), otros:suma('otros')};
+    /* Lo que tendría que haber en el cajón si el efectivo de TODO lo cobrado
+       en el turno (incluidos los domicilios) se quedó en la misma caja. */
+    const esperadoTodo = c.base + cobradoTodo.efectivo + t.ingresos + t.egresos;
+
+    return {c, t, desde, hasta, gCaja, grupos:[gDom, gOtra, gFuera],
+            informativos:[gAnul, gPend], comandas, comandasTotal, gastosOtros,
+            cobradoTodo, esperadoTodo,
+            diferencia: cobradoTodo.total - t.total};
+  },
+  /** Modal de la auditoría. Se puede abrir para la caja abierta o para
+      cualquier cierre anterior, y se imprime igual que los demás tickets. */
+  verAuditoria(cajaId){
+    const c = cajaId ? (DB.d.cash||[]).find(x => x.id === cajaId) : DB.openCash();
+    if (!c) return UI.toast('No se encontró ese turno de caja.','warn');
+    const a = this.auditoria(c);
+    const m = Util.money;
+    const fila = (label, valor, opts) => {
+      opts = opts || {};
+      return '<div class="tot-row"' + (opts.fuerte ? ' style="font-weight:800"' : '') + '>' +
+        '<span>' + label + '</span><b>' + m(valor) + '</b></div>';
+    };
+    const bloqueGrupo = g => {
+      if (!g.n) return '';
+      return '<div class="card" style="margin-top:10px">' +
+        '<div class="row" style="justify-content:space-between;gap:10px;align-items:flex-start">' +
+          '<div><b>' + Util.esc(g.titulo) + '</b>' +
+            '<div class="dim" style="font-size:11.5px;max-width:52ch;margin-top:2px">' + Util.esc(g.motivo) + '</div></div>' +
+          '<div style="text-align:right;white-space:nowrap"><b style="font-family:var(--mono)">' + m(g.total) + '</b>' +
+            '<div class="dim" style="font-size:11px">' + g.n + ' factura' + (g.n===1?'':'s') + '</div></div>' +
+        '</div>' +
+        '<div class="dim" style="font-size:11.5px;margin-top:6px">Efectivo ' + m(g.efectivo) +
+          ' · Transferencias ' + m(g.transferencias) + (g.otros ? ' · Otros ' + m(g.otros) : '') + '</div>' +
+        '<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px">Ver las ' + g.n + ' facturas</summary>' +
+          UI.table([{t:'Factura'},{t:'Hora'},{t:'Responsable'},{t:'Efectivo',n:1},{t:'Transf.',n:1},{t:'Total',n:1}],
+            g.filas.slice().sort((x,y)=> (x.fecha||'') < (y.fecha||'') ? -1 : 1).map(f =>
+              '<tr><td>' + Util.esc(String(f.numero)) + (f.tipo !== 'mesa' ? ' <span class="dim">· ' + Util.esc(f.tipo) + '</span>' : '') + '</td>' +
+              '<td>' + Util.time(f.fecha) + '</td><td>' + Util.esc(f.quien) + '</td>' +
+              '<td class="n">' + m(f.efectivo) + '</td><td class="n">' + m(f.transferencias) + '</td>' +
+              '<td class="n">' + m(f.total) + '</td></tr>')) +
+        '</details></div>';
+    };
+
+    const hayDif = a.diferencia !== 0;
+    const body =
+      '<div class="dim" style="font-size:12px;margin-bottom:10px">Turno de <b>' +
+        Util.esc((DB.user(c.userId)||{}).nombre || '—') + '</b> · ' + Util.dt(a.desde) +
+        (c.cierre ? ' a ' + Util.dt(c.cierre) : ' (abierto)') + '</div>' +
+
+      '<div class="card"><div style="font-weight:800;margin-bottom:6px">1 · Lo que imprime el Resumen de Turno</div>' +
+        fila('Total de ventas', a.t.total) +
+        fila('Efectivo', a.t.efectivoVentas) +
+        fila('Transferencias', a.t.transferencias) +
+        (a.t.otrosMedios ? fila('Otros medios', a.t.otrosMedios) : '') +
+        fila('Gastos pagados en efectivo', -Math.abs(a.t.egresos)) +
+        fila('TOTAL EFECTIVO A LIQUIDAR', a.t.efectivoLiquidar, {fuerte:true}) +
+      '</div>' +
+
+      '<div class="card" style="margin-top:12px">' +
+        '<div style="font-weight:800;margin-bottom:6px">2 · Conciliación con el conteo manual</div>' +
+        '<div class="dim" style="font-size:11.5px;margin-bottom:8px">El ticket liquida solo el dinero de esta caja. Si el conteo a mano sumó todo lo que pasó por el cajón, la cifra a comparar es la última línea.</div>' +
+        fila('Ventas de esta caja (ticket)', a.gCaja.total) +
+        a.grupos.map(g => g.n ? fila('+ ' + g.titulo, g.total) : '').join('') +
+        '<hr style="border:0;border-top:1px solid var(--line);margin:8px 0">' +
+        fila('= Total cobrado en el turno', a.cobradoTodo.total, {fuerte:true}) +
+        '<div class="dim" style="font-size:11.5px;margin-top:4px">' + a.cobradoTodo.n +
+          ' facturas · Efectivo ' + m(a.cobradoTodo.efectivo) +
+          ' · Transferencias ' + m(a.cobradoTodo.transferencias) + '</div>' +
+        (hayDif
+          ? '<div class="card" style="margin-top:10px;border-color:var(--brass)">' +
+              '<b>Diferencia entre las dos cifras: ' + m(a.diferencia) + '</b>' +
+              '<div class="dim" style="font-size:11.5px;margin-top:4px">Si el conteo manual da de más aproximadamente este valor, no hay plata perdida: es dinero que la app está liquidando en otro cierre. Revisa los bloques de abajo.</div></div>'
+          : '<div class="dim" style="font-size:11.5px;margin-top:8px">No hay ninguna venta del día por fuera de esta caja: el ticket y el conteo manual deben dar lo mismo.</div>') +
+        (a.gastosOtros ? '<div class="dim" style="font-size:11.5px;margin-top:8px">Además, ' + m(a.gastosOtros) +
+          ' en gastos del día quedaron registrados en otra caja y no aparecen en la línea "Gastos" de este ticket.</div>' : '') +
+      '</div>' +
+
+      a.grupos.map(bloqueGrupo).join('') +
+
+      '<div class="card" style="margin-top:12px">' +
+        '<div style="font-weight:800;margin-bottom:6px">3 · Arqueo del cajón</div>' +
+        fila('Base inicial registrada', c.base) +
+        fila('Efectivo de las ventas de esta caja', a.t.efectivoVentas) +
+        (a.t.ingresos ? fila('Ingresos manuales', a.t.ingresos) : '') +
+        fila('Gastos pagados en efectivo', a.t.egresos) +
+        fila('Efectivo esperado en el cajón', a.t.esperado, {fuerte:true}) +
+        (a.cobradoTodo.efectivo !== a.t.efectivoVentas
+          ? '<div class="dim" style="font-size:11.5px;margin-top:8px">Si el efectivo de los domicilios y de los demás cobros del turno también se quedó en este cajón, lo que se debería contar es <b>' +
+            m(a.esperadoTodo) + '</b>.</div>' : '') +
+        '<div class="dim" style="font-size:11.5px;margin-top:8px">Verifica que la base registrada (' + m(c.base) +
+          ') sea la que de verdad se dejó en el cajón al abrir: cualquier diferencia aquí se arrastra a todo el arqueo.</div>' +
+      '</div>' +
+
+      ((a.informativos.some(g=>g.n) || a.comandas.length)
+        ? '<div class="card" style="margin-top:12px">' +
+            '<div style="font-weight:800;margin-bottom:6px">4 · No son dinero cobrado</div>' +
+            '<div class="dim" style="font-size:11.5px;margin-bottom:8px">No suman en ningún total, pero sí aparecen si se cuentan las comandas en papel.</div>' +
+            a.informativos.map(g => g.n ? fila(g.titulo + ' (' + g.n + ')', g.total) : '').join('') +
+            (a.comandas.length ? fila('Comandas abiertas sin cobrar (' + a.comandas.length + ')', a.comandasTotal) : '') +
+          '</div>'
+        : '') +
+
+      a.informativos.map(bloqueGrupo).join('');
+
+    UI.modal({
+      title:'Auditoría del turno', size:'lg', body:body,
+      footer:'<button class="btn" data-close>Cerrar</button>' +
+        '<button class="btn gold" id="aud-print">' + Util.ico('print') + ' Imprimir auditoría</button>',
+      onMount(ov){
+        ov.querySelector('#aud-print').onclick = () => {
+          DB.log('caja:auditoria', 'Ticket ' + m(a.t.total) + ' · Cobrado en el turno ' +
+            m(a.cobradoTodo.total) + ' · Diferencia ' + m(a.diferencia), c.id);
+          UI.imprimir(ov);
+        };
+      }
+    });
+  },
+  /** TRASPASO DE TURNO · Comandas todavía abiertas en este momento.
+      Una comanda sin cobrar NO es dinero: nadie ha recibido un peso por
+      ella, así que no entra en ningún total del cierre (sumarla dejaría la
+      caja esperando plata que no existe). Lo que sí hace falta es dejar
+      constancia de que pasan al turno siguiente, que es quien las cobrará
+      y en cuyo cierre caerá ese dinero. Solo lee. */
+  comandasAbiertas(){
+    return DB.openOrders().map(o => ({
+      id: o.id,
+      quees: (o.tipo && o.tipo !== 'mesa') ? ((POS.TIPOS[o.tipo]||{}).corto || o.tipo) : ('Mesa ' + (o.mesa || '—')),
+      valor: Money.comanda(o), estado: o.estado, desde: o.fecha,
+      quien: (DB.user(o.meseroId || o.userId)||{}).nombre || '—'
+    })).sort((a, b) => (a.desde||'') < (b.desde||'') ? -1 : 1);
+  },
+  /** Resumen {n, total, comandas} del traspaso, o null si no hay ninguna. */
+  resumenTraspaso(lista){
+    const l = lista || this.comandasAbiertas();
+    if (!l.length) return null;
+    return {n:l.length, total:l.reduce((a, x) => a + x.valor, 0), comandas:l};
+  },
+  /** Bloque de tarjeta con las comandas que se traspasan (o se reciben). */
+  bloqueTraspaso(tr, titulo, nota){
+    if (!tr || !tr.n) return '';
+    return '<div class="card" style="margin-top:12px">' +
+      '<div class="eyebrow" style="margin-bottom:8px">' + Util.esc(titulo) + '</div>' +
+      '<div class="tot-row"><span>' + tr.n + ' comanda' + (tr.n===1?'':'s') + ' sin cobrar</span><b>' +
+        Util.money(tr.total) + '</b></div>' +
+      UI.table([{t:'Comanda'},{t:'Desde'},{t:'Atendió'},{t:'Valor',n:1}],
+        tr.comandas.map(x => '<tr><td>' + Util.esc(x.quees) + '</td><td>' + Util.time(x.desde) + '</td>' +
+          '<td>' + Util.esc(x.quien) + '</td><td class="n">' + Util.money(x.valor) + '</td></tr>')) +
+      '<p class="dim" style="font-size:11.5px;margin-top:6px">' + Util.esc(nota) + '</p></div>';
+  },
   html(){
     const c = DB.openCash();
     const cerradas = DB.d.cash.filter(x=>x.estado==='cerrada');
@@ -11828,7 +12303,10 @@ Views.cash = {
         /* INTERVENCIÓN: "Resumen de Turno" — botón amarillo (mismo estilo
            .btn.gold usado en toda la app, p. ej. "Abrir caja"/"Cobrar")
            para imprimir solo el resumen totalizado del turno en 80 mm. */
-        '<button class="btn gold" id="cash-resumen-turno" style="margin-left:8px">' + Util.ico('print') + ' Resumen de Turno</button>'
+        '<button class="btn gold" id="cash-resumen-turno" style="margin-left:8px">' + Util.ico('print') + ' Resumen de Turno</button>' +
+        /* Auditoría: solo lectura, explica cualquier descuadre contra el
+           conteo manual sin alterar ningún cálculo del turno. */
+        '<button class="btn" id="cash-auditar" style="margin-left:8px">' + Util.ico('search') + ' Auditar turno</button>'
         : '') + '</div>' +
       cur +
       /* INTERVENCIÓN: filtro de cierres por fecha y por empleado, con
@@ -11854,7 +12332,8 @@ Views.cash = {
               '<td class="n">' + Util.money(x.esperado) + '</td><td class="n">' + Util.money(x.contado) + '</td>' +
               '<td class="n"><span class="badge ' + (dif===0?'ok':Math.abs(dif)<5000?'warn':'bad') + '">' +
               (dif>0?'+':'') + Util.money(dif) + '</span></td>' +
-              '<td class="n"><button class="btn sm ghost" data-cierre-resumen="' + x.id + '" title="Ver / imprimir resumen de este cierre">' + Util.ico('print') + '</button></td></tr>';
+              '<td class="n"><button class="btn sm ghost" data-cierre-resumen="' + x.id + '" title="Ver / imprimir resumen de este cierre">' + Util.ico('print') + '</button>' +
+              '<button class="btn sm ghost" data-cierre-auditar="' + x.id + '" title="Auditar este cierre contra el conteo manual" style="margin-left:4px">' + Util.ico('search') + '</button></td></tr>';
           }), {emptyTitle: filtroActivo ? 'Sin cierres para ese filtro' : 'Sin cierres registrados',
                emptyMsg: filtroActivo ? 'Prueba con otra fecha o empleado.' : 'El historial de arqueos aparecerá aquí.'}) + '</div>';
   },
@@ -11878,6 +12357,9 @@ Views.cash = {
     const fLimpiar = document.getElementById('cf-limpiar');
     if (fLimpiar) fLimpiar.onclick = () => { this._filtroCierres = {fecha:'', userId:''}; Router.render(); };
     document.querySelectorAll('[data-cierre-resumen]').forEach(b => b.onclick = () => this.resumenCierre(b.dataset.cierreResumen));
+    const btnAud = document.getElementById('cash-auditar');
+    if (btnAud) btnAud.onclick = () => this.verAuditoria();
+    document.querySelectorAll('[data-cierre-auditar]').forEach(b => b.onclick = () => this.verAuditoria(b.dataset.cierreAuditar));
   },
   /** INTERVENCIÓN: exporta los "Movimientos del turno" como un ticket
       térmico de 80 mm, con toda la información en sentido vertical
@@ -11991,6 +12473,9 @@ Views.cash = {
        imprime paso a paso para que la cajera pueda seguir la cuenta. */
     const otrosMedios = Math.max(0, Number(t.otrosMedios)||0);
     const transferencias = Number(t.transferencias)||0;
+    /* Traspaso: en un turno ya cerrado se imprime lo que quedó registrado
+       en el cierre; en uno abierto, lo que hay vivo en este momento. */
+    const traspaso = (c.estado === 'cerrada') ? (c.traspaso || null) : Views.cash.resumenTraspaso();
     /* H7: antes era total − gastos (TODOS, incluso los pagados por
        transferencia, que no salen del cajón) − transferencias − otros; y
        omitía los ingresos manuales. Ahora es el mismo cálculo del arqueo. */
@@ -12038,6 +12523,18 @@ Views.cash = {
       '<hr>' +
       linea('TOTAL EFECTIVO A LIQUIDAR', efectivoLiquidar, {grande:true, mt:'6px'}) +
       linea('Efectivo en cajón (con base)', t.esperado) +
+      /* Traspaso de turno. Va DESPUÉS del total y rotulado como lo que es:
+         comandas sin cobrar, que no son dinero de este turno. Así la cifra
+         a liquidar nunca se confunde con lo que queda pendiente. */
+      (traspaso && traspaso.n
+        ? '<hr><div style="font-size:11px">Comandas que pasan al siguiente turno: <b>' + traspaso.n +
+          '</b> por <b>' + Util.money(traspaso.total) + '</b></div>' +
+          '<div style="font-size:10px">No es dinero de este turno: las cobra el turno siguiente.</div>'
+        : '') +
+      (c.recibidas && c.recibidas.n
+        ? '<div style="font-size:10px;margin-top:3px">Recibidas del turno anterior: ' + c.recibidas.n +
+          ' por ' + Util.money(c.recibidas.total) + '</div>'
+        : '') +
       '</div>';
 
     UI.modal({
@@ -12080,14 +12577,22 @@ Views.cash = {
   },
   open(){
     if (DB.openCash()) return UI.toast('Ya hay una caja abierta.','warn');
+    /* Lo que el turno que entra RECIBE sin cobrar: las mismas comandas que
+       el turno anterior dejó vivas. Se muestran antes de abrir para que
+       quien recibe sepa qué mesas quedan a su cargo. */
+    const recibe = this.resumenTraspaso();
     UI.formModal({title:'Abrir caja', size:'sm', ok:'Abrir turno',
+      extra: this.bloqueTraspaso(recibe, 'Comandas que recibes del turno anterior',
+        'Todavía no son dinero. Cuando las cobres entrarán en TU cierre.'),
       fields:[{k:'base', label:'Base en efectivo', type:'number', val:200000, min:0, req:true, full:true},
               {k:'nota', label:'Observación', val:'', full:true}],
       onSave(d, close){
         const c = {id:Util.uid('cx'), apertura:Util.now(), cierre:null, base:d.base, nota:d.nota,
           userId:(Auth.user||{}).id, sede:DB.d.config.sedeId, movs:[], estado:'abierta', act:Util.now()};
+        c.recibidas = recibe ? {n:recibe.n, total:recibe.total} : null;
         DB.d.cash.push(c); DB.touch('cash');
-        DB.log('caja:abrir','Base ' + Util.money(d.base), c.id);
+        DB.log('caja:abrir','Base ' + Util.money(d.base) +
+          (recibe ? ' · recibe ' + recibe.n + ' comanda(s) por ' + Util.money(recibe.total) : ''), c.id);
         Sync.enqueue('cash','open', c);
         close(); UI.toast('Caja abierta con ' + Util.money(d.base) + '.','ok'); Router.render();
       }});
@@ -12119,8 +12624,13 @@ Views.cash = {
     if (!(await UI.confirm('Usted cerrará la Caja, ¿realizó la impresión del Resumen del Turno?',
       {ok:'Sí, continuar con el cierre'}))) return;
     const t = this.totals(c);
+    /* Comandas que quedan vivas al cerrar: se registran como traspaso al
+       turno siguiente. No suman en ninguna cifra del arqueo. */
+    const traspaso = this.resumenTraspaso();
     UI.formModal({title:'Arqueo y cierre de caja', ok:'Cerrar turno',
-      extra:'<div class="card" style="margin-top:12px">' +
+      extra: this.bloqueTraspaso(traspaso, 'Comandas que pasan al siguiente turno',
+        'No es dinero de este turno: no suman en el arqueo. Las cobrará quien reciba la caja, y ese dinero entrará en su cierre.') +
+        '<div class="card" style="margin-top:12px">' +
         '<div class="eyebrow" style="margin-bottom:8px">Resumen de ventas del turno</div>' +
         '<div class="tot-row"><span>Total facturado (' + t.ventas.length + ' facturas)</span><b>' + Util.money(t.total) + '</b></div>' +
         '<div class="tot-row" style="padding-left:14px;font-size:13px;color:var(--ash)"><span>· Efectivo</span><b>' + Util.money(t.efectivoVentas) + '</b></div>' +
@@ -12150,7 +12660,13 @@ Views.cash = {
       onSave(d, close){
         c.estado = 'cerrada'; c.cierre = Util.now(); c.esperado = t.esperado; c.contado = d.contado;
         c.diferencia = d.contado - t.esperado; c.notaCierre = d.nota; c.act = Util.now();
+        /* Queda guardado QUÉ se entregó al turno siguiente, para que el
+           traspaso se pueda revisar después en el resumen del cierre. */
+        c.traspaso = traspaso ? {n:traspaso.n, total:traspaso.total,
+          comandas:traspaso.comandas.map(x => ({id:x.id, quees:x.quees, valor:x.valor, desde:x.desde, quien:x.quien}))} : null;
         DB.touch('cash');
+        if (traspaso) DB.log('caja:traspaso', traspaso.n + ' comanda(s) sin cobrar por ' +
+          Util.money(traspaso.total) + ' pasan al siguiente turno', c.id);
         DB.log('caja:cerrar','Esperado ' + Util.money(t.esperado) + ' · contado ' + Util.money(d.contado) +
           ' · diferencia ' + Util.money(c.diferencia), c.id);
         Sync.enqueue('cash','close', c);
@@ -13322,7 +13838,10 @@ Views.cfg = {
       });
       DB.touch('config'); DB.log('config:guardar','Parámetros del sistema actualizados');
       Ticket.prepararLogo();      // el logotipo pudo cambiar
-      Sync.enqueue('config','update', Object.assign({id:'config'}, c));
+      /* AUDITORÍA CRUZADA: sin 'act' el receptor descartaba el cambio en
+         silencio (merge exige act mayor), así que la configuración se veía
+         aplicada solo en la tablet donde se guardó. */
+      Sync.enqueue('config','update', Object.assign({id:'config', act:Util.now()}, c));
       Respaldo.iniciar();
       UI.toast('Configuración guardada.','ok'); Router.render();
     };
