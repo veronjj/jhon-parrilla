@@ -954,7 +954,17 @@ const Util = {
   now(){ return new Date().toISOString(); },
   dt(iso){ if(!iso) return '—'; const d = new Date(iso);
     return d.toLocaleDateString('es-CO',{day:'2-digit',month:'short'}) + ' ' + d.toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit'}); },
-  date(iso){ if(!iso) return '—'; return new Date(iso).toLocaleDateString('es-CO',{day:'2-digit',month:'short',year:'numeric'}); },
+  /* CORRECCIÓN DE RAÍZ (fechas que salían un día antes): una fecha sin hora
+     ("2026-09-27", que es como la guardan los campos de tipo date) la
+     interpreta el navegador como medianoche UTC. En Colombia (UTC-5) eso cae
+     a las 7 p. m. del día ANTERIOR, así que la fecha de una compra —y el
+     periodo de los reportes— se mostraban corridos un día. Se ancla al
+     mediodía local, que cae en el mismo día en cualquier huso horario. */
+  date(iso){
+    if(!iso) return '—';
+    const s = String(iso);
+    return new Date(s.length === 10 ? s + 'T12:00:00' : s)
+      .toLocaleDateString('es-CO',{day:'2-digit',month:'short',year:'numeric'}); },
   time(iso){ if(!iso) return '—'; return new Date(iso).toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit'}); },
   daysAgo(n){ const d = new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate()-n); return d; },
   norm(s){ return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,''); },
@@ -6888,12 +6898,21 @@ const Domicilios = {
     const todos = this.listaHoy();
     const amb = this.ambitoActual();
     if (!amb) return todos;
+    const enVentana = s => s.fecha >= amb.apertura && (!amb.cierre || s.fecha <= amb.cierre);
     return todos.filter(s => {
-      /* Ya cobrado: manda la marca de a quién pertenece ese dinero. */
+      /* Sellado a un turno concreto: manda esa marca. */
       if (s.domTurnoId) return !!amb.turno && s.domTurnoId === amb.turno.id;
-      if (s.cajaId)     return !!amb.caja  && s.cajaId === amb.caja.id;
-      /* Todavía en despacho: es del turno si se tomó dentro de su ventana. */
-      return s.fecha >= amb.apertura && (!amb.cierre || s.fecha <= amb.cierre);
+      /* CORRECCIÓN: quien opera un TURNO DE DOMICILIOS ve sus pedidos por la
+         ventana del turno. El `cajaId` dice DÓNDE se liquida el dinero, no de
+         quién es el pedido: desde que Domicilios y Caja son un solo circuito
+         casi todo domicilio lo trae, así que filtrar por él dejaba fuera de la
+         lista —y de los KPI de abajo— todos los pedidos de la encargada que no
+         tiene además una caja abierta a su nombre. Ese era el desfase entre
+         "Domicilios del turno" arriba y "Pedidos de mi turno" abajo. */
+      if (amb.turno) return enVentana(s);
+      /* Quien opera una CAJA sigue viendo lo de su caja, como antes. */
+      if (s.cajaId) return !!amb.caja && s.cajaId === amb.caja.id;
+      return enVentana(s);
     });
   },
 
@@ -6994,14 +7013,7 @@ const Domicilios = {
              totalDia: delDia.reduce((a,s)=>a+(s.total||0), 0) };
   },
 
-  /** Domicilios cobrados dentro de la ventana del turno que NO están contando.
-      Sirve para que un resumen en ceros nunca sea mudo: si hay dinero del día
-      que se quedó fuera, la pantalla lo dice y explica por qué. */
-  sueltosDelTurno(t){
-    const dentro = new Set(this.turnoTotals(t).ventas.map(s => s.id));
-    return DB.paid().filter(s => s.tipo === 'domicilio' && !dentro.has(s.id) &&
-      s.fecha >= t.apertura && (!t.cierre || s.fecha <= t.cierre));
-  }
+  /* sueltosDelTurno() se eliminó junto con el aviso al que alimentaba. */
 };
 
 Views.domicilios = {
@@ -7057,22 +7069,16 @@ Views.domicilios = {
           UI.kpi('Transferencias', Util.money(tt.transferencia), 'Nequi, Daviplata, transferencia') +
           UI.kpi('Total del turno', Util.money(tt.total), 'suma de domicilios cobrados') +
         '</div>' +
-        /* Un resumen en ceros no puede quedarse callado. Si hubo domicilios
-           cobrados mientras este turno estaba abierto y no están contando, se
-           dice cuántos y por cuánto, en vez de dejar la pantalla en blanco. */
-        (function(){
-          const sueltos = Domicilios.sueltosDelTurno(miTurno);
-          if (!sueltos.length) return '';
-          const suma = sueltos.reduce((a,s)=>a+(s.total||0), 0);
-          return '<div style="margin:0 16px 16px;padding:11px 13px;border-radius:var(--r);' +
-            'background:rgba(163,35,28,.10);border:1px solid rgba(163,35,28,.35)">' +
-            '<div style="font-size:12.5px;font-weight:700;color:var(--ember-hi)">' +
-              sueltos.length + ' domicilio' + (sueltos.length>1?'s':'') + ' por ' + Util.money(suma) +
-              ' se cobraron durante este turno pero no cuentan en él.</div>' +
-            '<div class="dim" style="font-size:11.5px;margin-top:5px;line-height:1.5">' +
-              'Son cobros de otra encargada, cobros hechos en Caja (se liquidan en el cierre de caja), o anteriores a que se sellara el turno en la venta. ' +
-              'Están en la lista de abajo y sí entran en el total del día.</div></div>';
-        })() +
+        /* El aviso de "domicilios que no cuentan en este turno" se retiró.
+           Nació cuando el dinero de los domicilios se liquidaba aparte y un
+           cobro hecho en Caja quedaba fuera del turno. Desde que Domicilios y
+           Caja son un solo circuito eso ya no ocurre: esos cobros SÍ cuentan
+           en el historial del turno, así que el aviso nombraba una causa que
+           ya no existe, y sus dos afirmaciones finales —"están en la lista de
+           abajo" y "sí entran en el total del día"— eran falsas para los
+           pedidos sellados al turno de otra encargada, que es lo único que
+           seguía quedando fuera. Era solo informativo: no entraba en ningún
+           total ni en el cierre. */
       '</div>';
     })();
 
@@ -7146,16 +7152,21 @@ Views.domicilios = {
 
     return '<div class="view-head"><div>' +
         '<div class="eyebrow">' +
-          (ambito ? 'Pedidos de mi turno · desde ' + Util.time(ambito.apertura)
+          (ambito ? 'Pedidos de mi turno · abierto desde ' + Util.dt(ambito.apertura)
                   : 'Pedidos a domicilio de hoy · ' + Util.today()) + '</div>' +
         '<h2>Domicilios</h2></div></div>' +
       turnoHTML +
       domsHTML +
       '<div class="grid g-kpi" style="margin-bottom:14px">' +
         /* Los rótulos siguen a lo que de verdad se está contando. */
-        UI.kpi(ambito ? 'Pedidos de mi turno' : 'Pedidos hoy', String(lista.length), 'domicilios registrados') +
-        UI.kpi(ambito ? 'Cobrado en mi turno' : 'Cobrado hoy', Util.money(totalDia),
-          lista.filter(s=>s.estado==='pagada').length + ' cobrados') +
+        /* Estos tres cuentan SOLO lo de hoy (listaHoy), mientras el resumen de
+           arriba cuenta toda la ventana del turno, que puede abarcar varios
+           días si no se cerró. El rótulo lo dice para que los dos números no
+           se lean como si fueran lo mismo. */
+        UI.kpi(ambito ? 'Pedidos de hoy en tu turno' : 'Pedidos hoy', String(lista.length),
+          'domicilios registrados hoy') +
+        UI.kpi(ambito ? 'Cobrado hoy en tu turno' : 'Cobrado hoy', Util.money(totalDia),
+          lista.filter(s=>s.estado==='pagada').length + ' cobrados hoy') +
         UI.kpi('En despacho', String(enDespacho), 'pendientes de cobro o entrega') +
       '</div>' +
       '<div class="card pad0" style="margin-bottom:14px">' +
@@ -10224,10 +10235,15 @@ Views.inv = {
     DB.purchases().forEach(c => {
       const cant = Number(c.gramos) || 0;
       if (cant <= 0) return;
+      /* La FECHA DE INGRESO es la del documento de compra —el día en que la
+         mercancía entró al local—, no el instante en que alguien la digitó.
+         Si la compra no la trae, se cae a la marca de registro. */
+      const soloFecha = !!(c.fecha && c.fecha.length <= 10);
+      const cuando = soloFecha ? c.fecha : (c.fecha || c.act || '');
       lista.push({
-        userId: c.userId || null,
-        cuando: c.act || (c.fecha && c.fecha.length <= 10 ? c.fecha + 'T12:00:00' : c.fecha) || '',
-        origen: 'Compra', meatId: c.meatId, cantidad: cant, valor: Number(c.total) || 0,
+        userId: c.userId || null, cuando, soloFecha,
+        orden: soloFecha ? c.fecha + 'T23:59:59' : (cuando || c.act || ''),
+        origen: 'Compra', meatId: c.meatId, cantidad: cant,
         detalle: [c.proveedor ? 'Proveedor: ' + c.proveedor : '', c.factura ? 'Factura ' + c.factura : '', c.nota || '']
           .filter(Boolean).join(' · ')
       });
@@ -10239,25 +10255,25 @@ Views.inv = {
          saber si fue entrada o salida: se deja fuera en vez de adivinar. */
       if (!isFinite(cant) || cant <= 0) return;
       lista.push({
-        userId: a.userId || null, cuando: a.fecha || '',
+        userId: a.userId || null, cuando: a.fecha || '', soloFecha: false, orden: a.fecha || '',
         origen: a.accion === 'inventario:conteo' ? 'Conteo' : 'Ajuste',
-        meatId: a.meatId || a.ref, cantidad: cant, valor: 0,
+        meatId: a.meatId || a.ref, cantidad: cant,
         detalle: [a.motivo && a.motivo !== 'conteo' ? 'Motivo: ' + a.motivo : '', a.nota || ''].filter(Boolean).join(' · ')
       });
     });
-    lista.sort((x, y) => String(y.cuando || '').localeCompare(String(x.cuando || '')));
+    lista.sort((x, y) => String(y.orden || '').localeCompare(String(x.orden || '')));
     return lista;
   },
   /** Los ingresos agrupados por persona, con los `n` más recientes de cada
-      una (3 por defecto) y el total que esa persona ha registrado. */
+      una (2 por defecto) y el total que esa persona ha registrado. */
   ingresosPorPersona(n){
-    n = n || 3;
+    n = n || 2;
     const porPersona = new Map();
     this.ingresos().forEach(r => {
       const k = r.userId || '_sin';
       if (!porPersona.has(k))
         porPersona.set(k, {userId:r.userId, nombre:(DB.user(r.userId)||{}).nombre || 'Sin identificar',
-                           rol:(DB.user(r.userId)||{}).rol || '', total:0, ultimos:[], ultima:r.cuando});
+                           rol:(DB.user(r.userId)||{}).rol || '', total:0, ultimos:[], ultima:r.orden});
       const g = porPersona.get(k);
       g.total++;
       if (g.ultimos.length < n) g.ultimos.push(r);
@@ -10266,7 +10282,7 @@ Views.inv = {
       .sort((a, b) => String(b.ultima || '').localeCompare(String(a.ultima || '')));
   },
   verIngresos(){
-    const grupos = this.ingresosPorPersona(3);
+    const grupos = this.ingresosPorPersona(2);
     const BADGE = {Compra:'ok', Ajuste:'info', Conteo:'warn'};
     const cantidad = r => {
       const m = DB.meat(r.meatId);
@@ -10285,22 +10301,21 @@ Views.inv = {
             '<span class="dim" style="font-size:11.5px;white-space:nowrap">' + g.total +
               ' ingreso' + (g.total === 1 ? '' : 's') + ' en total</span>' +
           '</div>' +
-          UI.table([{t:'Fecha'},{t:'Origen'},{t:'Insumo'},{t:'Cantidad',n:1},{t:'Valor',n:1}],
+          UI.table([{t:'Fecha de ingreso'},{t:'Origen'},{t:'Insumo'},{t:'Cantidad',n:1}],
             g.ultimos.map(r =>
-              '<tr><td style="white-space:nowrap">' + Util.esc(Util.dt(r.cuando)) + '</td>' +
+              '<tr><td style="white-space:nowrap">' +
+                Util.esc(r.soloFecha ? Util.date(r.cuando) : Util.dt(r.cuando)) + '</td>' +
               '<td><span class="badge ' + (BADGE[r.origen] || 'info') + '">' + Util.esc(r.origen) + '</span></td>' +
               '<td>' + Util.esc(nombreIns(r)) +
                 (r.detalle ? '<div class="dim" style="font-size:11px">' + Util.esc(r.detalle) + '</div>' : '') + '</td>' +
-              '<td class="n">' + Util.esc(cantidad(r)) + '</td>' +
-              '<td class="n">' + (r.valor ? Util.money(r.valor) : '—') + '</td></tr>')) +
+              '<td class="n">' + Util.esc(cantidad(r)) + '</td></tr>')) +
         '</div>').join('');
     UI.modal({
       title:'Últimos ingresos al inventario por persona', size:'lg',
-      body:'<p class="dim" style="font-size:12.5px;line-height:1.55;margin:0">' +
-        'Los 3 movimientos más recientes de cada persona que ha metido producto al inventario: ' +
-        'compras registradas, ajustes hacia arriba y conteos que encontraron de más. ' +
-        'Las mermas y los ajustes hacia abajo no son ingresos y no aparecen aquí.</p>' +
-        cuerpo,
+      /* Sin leyenda de encabezado: el título y las columnas ya dicen qué es,
+         y la ventana se lee de un vistazo. Las mermas y los ajustes hacia
+         abajo siguen quedando fuera (ver ingresos()). */
+      body: cuerpo,
       footer:'<button class="btn" data-close>Cerrar</button>'
     });
     DB.log('inventario:ingresos-consulta', grupos.length + ' persona(s) con ingresos registrados');
