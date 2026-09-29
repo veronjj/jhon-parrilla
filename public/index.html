@@ -8417,6 +8417,78 @@ const Orders = {
     Router.render();
   },
 
+  /** Lista de comandas suspendidas, ya ordenada y filtrada por quien las
+      suspendió. Una sola fuente para la tabla en pantalla y para el PDF, así
+      lo que se exporta es exactamente lo que se está viendo. */
+  suspendidas(userId){
+    return DB.orders()
+      .filter(o => o.estado === 'suspendida' && (!userId || (o.suspension||{}).por === userId))
+      .sort((a,b) => new Date((b.suspension||{}).en || b.fecha) - new Date((a.suspension||{}).en || a.fecha));
+  },
+  /** Personas que aparecen como "Suspendió" en las comandas apartadas. La
+      lista del filtro se arma con quienes REALMENTE aparecen, así nunca
+      ofrece una opción que devuelve cero. */
+  quienesSuspendieron(){
+    return Array.from(new Set(this.suspendidas().map(o => (o.suspension||{}).por).filter(Boolean)))
+      .map(id => DB.user(id)).filter(Boolean)
+      .sort((a,b) => String(a.nombre||'').localeCompare(String(b.nombre||'')));
+  },
+  /** Exporta a PDF (hoja carta) las comandas suspendidas que se están viendo.
+      Usa el mismo mecanismo de impresión de los reportes: el contenedor
+      #pdfdoc hace que UI.imprimir use el formato de hoja y no el de rollo. */
+  exportarSuspendidasPDF(){
+    const f = State.filters.orders || {};
+    const lista = this.suspendidas(f.susp || '');
+    if (!lista.length) return UI.toast('No hay comandas suspendidas para exportar.','warn');
+    const c = DB.d.config;
+    const quien = f.susp ? ((DB.user(f.susp)||{}).nombre || '—') : 'Todas';
+    const total = lista.reduce((a,o) => a + Orders.total(o), 0);
+    const th = (t, n) => '<th style="border-bottom:1.5px solid #111;text-align:' + (n?'right':'left') +
+      ';padding:5px">' + Util.esc(t) + '</th>';
+    const td = (t, n) => '<td style="border-bottom:1px solid #ddd;padding:5px;text-align:' +
+      (n?'right':'left') + '">' + t + '</td>';
+    const filas = lista.map(o =>
+      '<tr>' +
+        td(Util.esc(o.numero), 0) +
+        td(Util.esc(o.tipo && o.tipo !== 'mesa' ? (POS.TIPOS[o.tipo]||{corto:o.tipo}).corto : o.mesa), 0) +
+        td(Util.esc((DB.user(o.meseroId)||{}).nombre || '—'), 0) +
+        td(Util.esc((o.suspension||{}).motivo || '—'), 0) +
+        td(Util.esc((DB.user((o.suspension||{}).por)||{}).nombre || '—'), 0) +
+        td(Util.esc(Util.dt((o.suspension||{}).en || o.fecha)), 0) +
+        td(Util.money(Orders.total(o)), 1) +
+      '</tr>').join('');
+    UI.modal({
+      title:'Comandas suspendidas · PDF', size:'lg',
+      body:'<div style="background:#fff;color:#111;padding:22px;border-radius:8px" id="pdfdoc">' +
+        '<h2 style="font-family:Georgia,serif;margin-bottom:2px">' + Util.esc(c.empresa||'') + '</h2>' +
+        '<div style="font-size:11px;color:#555">NIT ' + Util.esc(c.nit||'') + ' · ' + Util.esc(c.dir||'') + '</div>' +
+        '<h3 style="margin-top:14px;font-size:14px">Comandas suspendidas</h3>' +
+        '<div style="font-size:11px;color:#555;margin-bottom:10px">Suspendidas por: <b>' + Util.esc(quien) + '</b>' +
+          ' · generado ' + Util.dt(Util.now()) + ' por ' + Util.esc((Auth.user||{}).nombre||'') + '</div>' +
+        '<table style="width:100%;border-collapse:collapse;font-size:11px">' +
+          '<thead><tr>' + th('Comanda') + th('Mesa') + th('Mesero') + th('Motivo') +
+            th('Suspendió') + th('Fecha') + th('Total', 1) + '</tr></thead>' +
+          '<tbody>' + filas + '</tbody>' +
+          '<tfoot><tr>' +
+            '<td colspan="6" style="border-top:1.5px solid #111;padding:6px 5px;font-weight:700">TOTAL · ' +
+              lista.length + ' comanda(s)</td>' +
+            '<td style="border-top:1.5px solid #111;padding:6px 5px;font-weight:700;text-align:right">' +
+              Util.money(total) + '</td>' +
+          '</tr></tfoot>' +
+        '</table>' +
+        '<div style="font-size:10px;color:#777;margin-top:12px">Comandas apartadas por error: no están en cocina, ' +
+          'no reservan inventario y no afectan la caja. ' + Util.esc(c.sede||'') + '</div></div>',
+      footer:'<button class="btn" data-close>Cerrar</button>' +
+        '<button class="btn gold" id="susp-print">' + Util.ico('print') + ' Imprimir o guardar PDF</button>',
+      onMount(ov){
+        ov.querySelector('#susp-print').onclick = () => {
+          DB.log('comandas:suspendidas-pdf', lista.length + ' comanda(s) · ' + quien + ' · ' + Util.money(total));
+          UI.imprimir(ov);
+        };
+      }
+    });
+  },
+
   /** Cierra una comanda suspendida. Solo administrador.
       `cancelar` la deja registrada como cancelada; `eliminar` la retira de la
       vista. En los dos casos queda la anotación en la bitácora. */
@@ -8675,21 +8747,40 @@ Views.orders = {
         '</div></div>';
     }).join('');
     const cerradas = DB.orders().filter(o=>o.estado==='cobrada').slice(-8).reverse();
-    const suspendidas = DB.orders().filter(o => o.estado === 'suspendida')
-      .sort((a,b) => new Date((b.suspension||{}).en || b.fecha) - new Date((a.suspension||{}).en || a.fecha));
+    const suspendidas = Orders.suspendidas();
     const puedeResolver = Auth.can('suspendidas');
     const verSuspendidas = suspendidas.length && (puedeResolver || Auth.can('suspender'));
+    /* INTERVENCIÓN: filtro por quien suspendió y exportación a PDF. Con
+       decenas de comandas apartadas, poder revisarlas cajera por cajera es lo
+       que permite resolverlas turno por turno; el PDF exporta exactamente lo
+       que el filtro está mostrando. */
+    if (fo.susp === undefined) fo.susp = '';
+    const quienesSusp = Orders.quienesSuspendieron();
+    if (fo.susp && !quienesSusp.some(u => u.id === fo.susp)) fo.susp = '';
+    const suspVistas = fo.susp ? Orders.suspendidas(fo.susp) : suspendidas;
+    const totalSusp = suspVistas.reduce((a,o) => a + Orders.total(o), 0);
     const panelSuspendidas = !verSuspendidas ? '' :
       '<div class="card pad0" style="margin-top:14px"><div class="card-h">' +
         '<h3>Comandas suspendidas</h3>' +
-        '<span class="badge warn right">' + suspendidas.length + '</span></div>' +
+        '<span class="badge warn right">' +
+          (fo.susp ? suspVistas.length + ' de ' + suspendidas.length : suspendidas.length) + '</span></div>' +
       '<div style="padding:0 16px 14px"><p class="dim" style="font-size:12px;line-height:1.55;margin:10px 0 0">' +
         'Apartadas por error. No están en cocina, no reservan inventario y no afectan la caja. ' +
         (puedeResolver ? 'Decide si se cancelan, se eliminan o vuelven al servicio.'
                        : 'El administrador decide qué hacer con ellas.') + '</p></div>' +
+      '<div class="row wrap" style="padding:0 16px 12px;gap:8px;align-items:center">' +
+        '<select class="inp" id="susp-quien" style="max-width:230px" title="Filtrar por quien suspendió la comanda">' +
+          '<option value="">Todas las cajeras</option>' +
+          quienesSusp.map(u => '<option value="' + u.id + '"' + (fo.susp === u.id ? ' selected' : '') + '>' +
+            Util.esc(u.nombre) + '</option>').join('') +
+        '</select>' +
+        (fo.susp ? '<button class="btn sm ghost" id="susp-clr">Limpiar filtro</button>' : '') +
+        '<span class="dim" style="font-size:12px">' + suspVistas.length + ' comanda(s) · ' + Util.money(totalSusp) + '</span>' +
+        '<button class="btn sm right" id="susp-pdf">' + Util.ico('print') + ' Exportar PDF</button>' +
+      '</div>' +
       UI.table([{t:'Comanda'},{t:'Mesa'},{t:'Mesero'},{t:'Motivo'},{t:'Suspendió'},{t:'Total',n:1}]
           .concat(puedeResolver ? [{t:'',n:1}] : []),
-        suspendidas.map(o =>
+        suspVistas.map(o =>
           '<tr><td class="num">' + Util.esc(o.numero) + '</td>' +
           '<td>' + Util.esc(o.tipo && o.tipo !== 'mesa' ? (POS.TIPOS[o.tipo]||{corto:o.tipo}).corto : o.mesa) + '</td>' +
           '<td>' + Util.esc((DB.user(o.meseroId)||{}).nombre||'—') + '</td>' +
@@ -8703,7 +8794,9 @@ Views.orders = {
               '<button class="btn sm ghost" data-scan="' + o.id + '">Cancelar</button> ' +
               '<button class="btn sm ghost" data-sdel="' + o.id + '" style="color:var(--ember-hi)">Eliminar</button>' +
             '</td>' : '') +
-          '</tr>')) + '</div>';
+          '</tr>'),
+        {emptyTitle:'Sin comandas de esa cajera',
+         emptyMsg:'Cambia el filtro o límpialo para ver todas las suspendidas.'}) + '</div>';
     return '<div class="view-head"><div><div class="eyebrow">' +
         (soloMias ? 'Tus mesas' : 'Todas las mesas') + '</div>' +
       '<h2>Comandas</h2></div></div>' +
@@ -8755,6 +8848,14 @@ Views.orders = {
     document.querySelectorAll('[data-react]').forEach(b => b.onclick = () => Orders.reactivar(b.dataset.react));
     document.querySelectorAll('[data-scan]').forEach(b => b.onclick = () => Orders.resolverSuspendida(b.dataset.scan, 'cancelar'));
     document.querySelectorAll('[data-sdel]').forEach(b => b.onclick = () => Orders.resolverSuspendida(b.dataset.sdel, 'eliminar'));
+    /* Filtro por cajera y exportación a PDF de las comandas suspendidas. */
+    const fSusp = State.filters.orders || (State.filters.orders = {q:'', susp:''});
+    const selSusp = document.getElementById('susp-quien');
+    if (selSusp) selSusp.onchange = () => { fSusp.susp = selSusp.value || ''; Router.render(); };
+    const clrSusp = document.getElementById('susp-clr');
+    if (clrSusp) clrSusp.onclick = () => { fSusp.susp = ''; Router.render(); };
+    const pdfSusp = document.getElementById('susp-pdf');
+    if (pdfSusp) pdfSusp.onclick = () => Orders.exportarSuspendidasPDF();
     document.querySelectorAll('[data-oline]').forEach(b => b.onclick = () => Orders.quitarLinea(b.dataset.oline, Number(b.dataset.idx)));
     const n = document.querySelector('[data-act=new]');
     if (n) n.onclick = () => { POS.reset(); POS.askMesa(()=>Router.go('pos')); };
@@ -13993,7 +14094,13 @@ const Demo = {
         DB.d.sales.push({id:Util.uid('v'), numero:c.prefijo + String(c.consecutivo++).padStart(5,'0'),
           fecha:fecha.toISOString(), sede:c.sedeId, userId:u.id, clienteId:cli.id, mesa:String(1+Math.floor(Math.random()*15)),
           items, subtotal, descuento:0, impuesto, propina, costo, total,
-          pagos:[{metodo, monto:total}], cambio:0, estado:'pagada', sync:true, act:fecha.toISOString()});
+          pagos:[{metodo, monto:total}], cambio:0, estado:'pagada', sync:true, act:fecha.toISOString(),
+          /* AUDITORÍA CRUZADA: una venta de demostración no puede ensuciar la
+             operación real. 'demo' como cajaId la deja fuera de cualquier
+             arqueo (DB.ventasDeCaja exige cajaId === c.id), e
+             inventarioAplicado:false impide que anularla devuelva al
+             inventario unos gramos que nunca se descontaron. */
+          cajaId:'demo', demo:true, inventarioAplicado:false});
         if (!cli.sistema){ cli.visitas++; cli.gastado += total; cli.ultima = fecha.toISOString(); cli.puntos += Math.floor(total/10000); }
         n++;
       }
