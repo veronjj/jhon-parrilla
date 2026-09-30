@@ -10,7 +10,7 @@
 <meta name="apple-mobile-web-app-title" content="Jhon Parrilla">
 <!-- Se sube cada vez que se publica un cambio. El servidor la lee y la expone
      en /salud, para comparar de un vistazo qué versión tiene cada tablet. -->
-<meta name="app-version" content="2026.09.20.2">
+<meta name="app-version" content="2026.09.29.1">
 <title>Jhon Parrilla · POS</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230C0B0A'/><path d='M7 20h18M7 24h18' stroke='%23A3231C' stroke-width='2.4' stroke-linecap='round'/><path d='M11 8c0 3-3 3-3 6h16c0-3-3-3-3-6' stroke='%23C8A24A' stroke-width='2' fill='none' stroke-linecap='round'/></svg>">
 <style>
@@ -2224,7 +2224,16 @@ DB._flushYa = async function(){
    Toda operación es un upsert idempotente: reenviarla no duplica nada.
    Conflictos: gana la escritura con `act` más reciente.
    ------------------------------------------------------------------- */
-const APP_VERSION = '2026.09.20.2';
+/* La versión se declara UNA sola vez, en el <meta name="app-version"> de
+   arriba, y aquí se lee de ahí. Antes estaba escrita dos veces y bastaba con
+   olvidar una para que el aviso de "equipo desfasado" dejara de funcionar: el
+   servidor publicaba la del meta y la tablet comparaba contra la constante.
+   El servidor lee ese mismo meta del archivo que sirve y lo expone en /salud,
+   así que las dos cifras salen siempre del mismo sitio. */
+const APP_VERSION = (function(){
+  const m = document.querySelector('meta[name="app-version"]');
+  return (m && m.getAttribute('content')) || '2026.09.29.1';
+})();
 
 const Sync = {
   running:false, lastAt:null, lastError:null, cursor:null, _poll:null, _fallos:0,
@@ -2267,6 +2276,8 @@ const Sync = {
      Se agrega 'audit' ahora que se confirmó que el servidor la acepta. */
   COLECCIONES:['users','categories','products','meats','staff','clients','sales','orders','purchases','cash','meals','gastos','domiciliarios','domTurnos','audit'],
   TOPE_EMPUJE:800,
+  /* Cuánto espera una operación apartada antes de reintentarse sola. */
+  PAUSA_APARTADA: 10*60*1000,
 
   /* El servidor confirma toda operación que le llega, incluso de entidades
      que no sabe guardar: responde "aceptada" y la descarta sin dejar rastro
@@ -2349,8 +2360,15 @@ const Sync = {
   url(path){ return (DB.d.config.endpoint||'').trim().replace(/\/$/,'') + path; },
 
   enqueue(entidad, op, record){
+    /* La cola guarda una COPIA, no el objeto vivo. Antes guardaba la
+       referencia, y cuando una fusión o un merge reemplazaban ese objeto por
+       uno nuevo, la operación pendiente quedaba apuntando al desechado: subía
+       al servidor un estado que esta tablet ya no tenía. Cada cambio local
+       encola su propia operación, así que lo más reciente siempre viaja. */
+    let copia = record;
+    try { copia = JSON.parse(JSON.stringify(record)); } catch(e){ copia = record; }
     DB.d.queue.push({
-      opId:Util.uid('op'), entidad, op, payload:record, ts:Util.now(),
+      opId:Util.uid('op'), entidad, op, payload:copia, ts:Util.now(),
       sede:DB.d.config.sedeId, user:(Auth.user||{}).id||null, intentos:0, error:null
     });
     DB.touch('queue');
@@ -2448,7 +2466,17 @@ const Sync = {
       const TOPE = 60;                       // freno duro: nunca un bucle infinito
       while (vueltas < TOPE){
         vueltas++;
-        lote = DB.d.queue.slice(0, this._tam || this.LOTE_MAX);
+        /* Las operaciones en pausa se saltan hasta que les llegue la hora:
+           así una que el servidor rechaza no bloquea la cola, pero tampoco se
+           pierde (ver "apartada" más abajo). */
+        const ahora = Util.now();
+        lote = DB.d.queue.filter(o => !o.pausadaHasta || o.pausadaHasta <= ahora)
+                         .slice(0, this._tam || this.LOTE_MAX);
+        if (!lote.length && DB.d.queue.length){
+          /* Solo quedan pausadas: no hay nada que empujar en esta vuelta, pero
+             sí hay que seguir bajando lo que mandaron los demás. */
+          lote = [];
+        }
         const previo = this.cursor;
         const res = await fetch(this.url('/sync'), {
           method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer ' + (Auth.token||'')},
@@ -2509,7 +2537,18 @@ const Sync = {
         lote.forEach(o => { o.fallosServidor = (o.fallosServidor||0) + 1; });
         if (lote.length === 1 && (lote[0].fallosServidor||0) >= 3){
           const mala = lote[0];
-          DB.d.queue = DB.d.queue.filter(o => o.opId !== mala.opId);
+          /* CAUSA RAÍZ (datos que nunca llegan al servidor): antes la
+             operación se BORRABA de la cola. El registro se quedaba en esta
+             tablet y no volvía a intentarse jamás, así que esa comanda o esa
+             venta no aparecía en los demás equipos — "a veces no se
+             sincroniza todo". Ahora se aparta en PAUSA: sale del camino para
+             que el resto siga enviándose, pero sigue en la cola (que se guarda
+             en disco) y se reintenta sola más tarde. Nada se pierde. */
+          mala.pausadaHasta = new Date(Date.now() + this.PAUSA_APARTADA).toISOString();
+          mala.fallosServidor = 0;
+          mala.apartadaEn = Util.now();
+          mala.ultimoError = err.message;
+          DB.d.queue = DB.d.queue.filter(o => o.opId !== mala.opId).concat([mala]);
           this.rechazadas.unshift({
             entidad:mala.entidad, op:mala.op,
             ref:(mala.payload && (mala.payload.numero || mala.payload.nombre || mala.payload.id)) || '—',
@@ -2517,8 +2556,8 @@ const Sync = {
           });
           if (this.rechazadas.length > 50) this.rechazadas.length = 50;
           DB.log('sync:apartada', 'El servidor rechazó ' + mala.entidad + '/' + mala.op +
-            ' (' + err.message + '). Se apartó para que el resto siguiera enviándose.');
-          UI.toast('Una operación de ' + mala.entidad + ' no la acepta el servidor. Se apartó; el resto sigue sincronizando.','warn', 6000);
+            ' (' + err.message + '). Queda en pausa y se reintenta sola; el resto sigue enviándose.', mala.opId);
+          UI.toast('Una operación de ' + mala.entidad + ' no la acepta el servidor. Queda en pausa y se reintenta sola; el resto sigue sincronizando.','warn', 6000);
           this._tam = this.LOTE_MAX;
         } else {
           this._tam = Math.max(1, Math.floor((this._tam || this.LOTE_MAX) / 4));
@@ -2557,6 +2596,64 @@ const Sync = {
     if (entidad === 'orders') return ['cobrada','cancelada','eliminada'].includes(r.estado) ? 1 : 0;
     return 0;
   },
+  /** CAUSA RAÍZ (información que no se sincroniza entre tablets)
+      Una comanda que llegaba del servidor REEMPLAZABA a la local entera
+      (Object.assign copia `items` en bloque). Si dos equipos le agregaron una
+      ronda a la misma mesa —cosa normal: una mesera toma el pedido en su
+      tablet y otra agrega la bebida desde la suya—, la ronda del que guardó
+      primero desaparecía, aunque cocina ya la hubiera preparado, y esa mesa se
+      cobraba de menos. Ahora las dos versiones se FUSIONAN plato por plato
+      usando el `lid` (el identificador único de cada línea), que es el mismo
+      mecanismo con el que la aplicación ya evita duplicar platos al cobrar.
+
+      Reglas de la fusión:
+        · Los campos sueltos (estado, mesa, nota, domicilio…) los pone la
+          versión con `act` más reciente.
+        · Las líneas se unen: las del más reciente en su orden, y al final las
+          que solo tiene el otro equipo — que es justo donde va una ronda nueva.
+        · Una línea retirada por un supervisor no resucita: su `lid` queda
+          anotado en `lidsFuera` y ese listado también se une. */
+  fusionarOrden(local, entrante, devolver){
+    const nuevoGana = (entrante.act || '') > (local.act || '');
+    const ganador = nuevoGana ? entrante : local;
+    const perdedor = nuevoGana ? local : entrante;
+    const base = nuevoGana ? Object.assign({}, local, entrante) : Object.assign({}, entrante, local);
+    const fuera = new Set([].concat(local.lidsFuera || [], entrante.lidsFuera || []).filter(Boolean));
+    const vistos = new Set();
+    const items = [];
+    const meter = (lista, exigirLid) => (lista || []).forEach(i => {
+      if (!i) return;
+      if (!i.lid){ if (!exigirLid) items.push(i); return; }
+      if (fuera.has(i.lid) || vistos.has(i.lid)) return;
+      vistos.add(i.lid); items.push(i);
+    });
+    meter(ganador.items, false);
+    /* marcador para saber, al final, si el servidor tenía la comanda incompleta */
+    const teniaElServidor = (entrante.items || []).length;
+    /* Una comanda ya cerrada NO recibe platos: si se cobró, se canceló o se
+       eliminó, su contenido quedó sellado con la factura que la pagó. Sumarle
+       una línea que otra tablet traía sin cobrar cambiaría por detrás una
+       cuenta ya cerrada. La línea suelta se conserva en la otra tablet y se
+       resuelve a mano. */
+    const cerrada = ['cobrada','cancelada','eliminada'].includes(base.estado);
+    /* Del otro equipo solo se suman las líneas identificables: sin `lid` no hay
+       forma de saber si es la misma línea o una copia, y duplicar un plato en
+       la comanda sería peor que perderlo. */
+    if (!cerrada) meter(perdedor.items, true);
+    base.items = items;
+    if (fuera.size) base.lidsFuera = Array.from(fuera); else delete base.lidsFuera;
+    /* Si la unión tiene más platos que lo que mandó el servidor, allá está
+       incompleta: se le devuelve la comanda completa para que todos los
+       equipos —y cualquier tablet que se una después— la vean igual. Solo
+       ocurre cuando de verdad falta algo, así que no se cicla. */
+    if (devolver && items.length > teniaElServidor){
+      base.act = Util.now();
+      setTimeout(() => { try { Sync.enqueue('orders','update', base); } catch(e){} }, 0);
+      DB.log('sync:comanda-fusionada', (base.numero || base.id) + ' · mesa ' + (base.mesa || '—') +
+        ' · ' + items.length + ' platos tras unir las dos versiones', base.id);
+    }
+    return base;
+  },
   retrocede(entidad, local, entrante){
     if (entidad !== 'sales' && entidad !== 'orders') return false;
     if (this.rangoCiclo(entidad, entrante) >= this.rangoCiclo(entidad, local)) return false;
@@ -2590,6 +2687,7 @@ const Sync = {
     const i = col.findIndex(x => x.id === data.id);
     if (i < 0) col.push(data);
     else if (this.retrocede(entidad, col[i], data)) return;
+    else if (entidad === 'orders') col[i] = this.fusionarOrden(col[i], data, true);
     else if (!col[i].act || (data.act||'') > col[i].act) col[i] = Object.assign({}, col[i], data);
     DB.touch(entidad);
   },
@@ -2685,6 +2783,9 @@ const Sync = {
       /* Si lo de aquí es mejor y vuelve a la cola, NO está confirmado: el
          servidor tiene una copia atrasada y hay que reenviarla. */
       if (this.retrocede(entidad, col[i], r)) return;
+      /* Las comandas se fusionan plato por plato (ver fusionarOrden): aquí no
+         se pisa nada, se suma lo que cada equipo aportó. */
+      if (entidad === 'orders'){ col[i] = this.fusionarOrden(col[i], r, true); n++; return; }
       // Fuera de ese caso, solo pisa lo local si lo del servidor es más reciente.
       if (!col[i].act || (r.act||'') > col[i].act){ col[i] = confirmar(Object.assign({}, col[i], r)); n++; }
       /* Y si no gana ninguno, el servidor igual tiene esa venta: queda
@@ -3007,9 +3108,58 @@ const Sync = {
   MARGEN_HUELLA: 0,          // solo cuenta que el servidor nos lleve ventaja
   ESPERA_HUELLA: 600000,     // no se reconcilia por huella más de una vez cada 10 min
   _ultimaHuella:0, _enVano:0,
+  /* ── Todas las tablets, la misma versión ──────────────────────────────
+     La aplicación se sirve desde la nube: no se instala en cada aparato,
+     basta con recargar. El problema es que el navegador Y el service worker
+     guardan una copia del archivo, así que una tablet puede seguir días
+     corriendo la versión vieja sin que nadie lo note. Y dos versiones
+     distintas hablando con el mismo servidor es justo lo que hace que "a
+     veces no se sincronice todo": la vieja no sabe fusionar comandas y pisa
+     lo que la nueva acaba de guardar.
+
+     El servidor publica en /salud la versión del archivo que está sirviendo
+     (la lee del <meta name="app-version">). Si no coincide con la que corre
+     en este equipo, este equipo está atrasado: se pone al día solo en cuanto
+     quede libre, sin que nadie tenga que entrar a Equipo a buscarlo. */
+  versionServidor:null, _avisoVersion:0,
+  /** Solo se recarga con el equipo en reposo: nunca encima de una ventana
+      abierta, un pedido a medias o un cobro en curso. La cola y la sesión se
+      guardan en disco, así que una recarga no pierde trabajo. */
+  seguroParaRecargar(){
+    try{
+      if (typeof UI !== 'undefined' && UI._stack && UI._stack.length) return false;
+      if (typeof POS !== 'undefined' && ((POS.cart||[]).length || POS._facturando || POS._cobroAbierto)) return false;
+      if (this.running || this.hidratando) return false;
+      if (typeof Domicilios !== 'undefined' && Domicilios._borrador &&
+          (Domicilios._borrador.items||[]).length) return false;
+    }catch(e){ return false; }
+    return true;
+  },
+  revisarVersion(info){
+    const enServidor = info && info.appVersion;
+    if (!enServidor || enServidor === APP_VERSION){ this.versionServidor = null; return false; }
+    this.versionServidor = enServidor;
+    if (this.seguroParaRecargar()){
+      DB.log('sync:version', 'Este equipo corría ' + APP_VERSION + ' y el servidor sirve ' +
+        enServidor + '. Se actualiza solo.');
+      UI.toast('Hay una versión más nueva en el servidor. Actualizando este equipo…','info', 4000);
+      setTimeout(() => { try{ Boot.actualizar(); }catch(e){ location.reload(); } }, 2200);
+      return true;
+    }
+    /* Ocupado: se avisa sin estorbar y se reintenta en la siguiente ronda. */
+    if (Date.now() - this._avisoVersion > 120000){
+      this._avisoVersion = Date.now();
+      UI.toast('Este equipo tiene una versión anterior (' + APP_VERSION + ' · el servidor sirve ' +
+        enServidor + '). Se actualizará solo al quedar libre.','warn', 9000);
+    }
+    return false;
+  },
   async comprobarHuella(forzar){
     if (!this.activo() || !navigator.onLine || this.hidratando || this.running) return false;
     const info = await this.probar(DB.d.config.endpoint, 6000);
+    /* Primero la versión: de nada sirve reconciliar datos con un archivo
+       viejo que va a volver a pisarlos. */
+    if (this.revisarVersion(info)) return false;
     if (!info || typeof info.registros !== 'number') return false;
     // Solo interesa el caso "al servidor le sobran registros que aquí no están".
     // Si este equipo tiene de más, es trabajo propio sin enviar: eso lo resuelve
@@ -6360,6 +6510,11 @@ const POS = {
         DB.log('control:bloqueo', 'corregir comanda ' + o.numero + ' · platos duplicados', o.id);
         return UI.toast('Control: la corrección dejaba platos duplicados en la comanda ' + o.numero + '. No se guardó.','bad', 7000);
       }
+      /* Corregir una comanda también retira platos: se anotan igual que al
+         quitar una línea, para que no vuelvan por sincronización. */
+      const quitados = (o.items || []).map(i => i.lid)
+        .filter(lid => lid && !itemsEd.some(x => x.lid === lid));
+      if (quitados.length) o.lidsFuera = Array.from(new Set([].concat(o.lidsFuera || [], quitados)));
       o.items = itemsEd;
       if (o.estado === 'listo' || o.estado === 'entregado') o.estado = 'pendiente';
       if (this.esLlevar()){
@@ -8554,6 +8709,9 @@ const Orders = {
     if (!(await UI.confirm('Se quita ' + it.qty + ' × ' + it.nombre + ' de la mesa ' + o.mesa +
       '. Avisa a la cocina si ya lo estaban preparando.', {ok:'Quitar del pedido', danger:true}))) return;
     o.items.splice(idx, 1);
+    /* Se anota el plato retirado: sin esta marca, la copia de otra tablet que
+       todavía lo tiene lo devolvería a la comanda en la siguiente fusión. */
+    if (it.lid) o.lidsFuera = Array.from(new Set([].concat(o.lidsFuera || [], [it.lid])));
     o.act = Util.now();
     DB.touch('orders');
     DB.log('comanda:quitar-linea', o.numero + ' · mesa ' + o.mesa + ' · ' + it.qty + ' × ' + it.nombre +
@@ -14040,7 +14198,8 @@ Views.cfg = {
           '</div>' +
           (desfasado
             ? '<p style="font-size:12.5px;margin-top:10px;color:var(--ember-hi)">El servidor ya tiene una versión más nueva. ' +
-              'Toca <b>Buscar actualización</b> en este aparato para traerla.</p>'
+              'Este equipo se actualiza solo en cuanto quede libre (sin ventanas abiertas ni pedidos a medias); ' +
+              'si quieres traerla ya, toca <b>Buscar actualización</b>.</p>'
             : '<p class="dim" style="font-size:11.5px;margin-top:10px">Si cambiaste el archivo en el servidor y este equipo ' +
               'sigue viendo lo anterior, usa el botón: descarta la copia guardada y vuelve a pedirla. ' +
               'Tu sesión y el pedido que tengas abierto no se pierden.</p>');
@@ -14426,9 +14585,16 @@ const Boot = {
       }
       if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations){
         const regs = await navigator.serviceWorker.getRegistrations();
-        await Promise.all(regs.map(r => r.update().catch(()=>r.unregister())));
+        /* Se DA DE BAJA, no se actualiza: un update() puede terminar bien y
+           dejar al service worker viejo sirviendo su caché hasta que se
+           cierren todas las pestañas — que es lo que hacía que la tablet
+           siguiera viendo la versión anterior aunque el botón dijera que ya
+           había actualizado. Al arrancar se vuelve a registrar solo. */
+        await Promise.all(regs.map(r => r.unregister().catch(()=>{})));
       }
     }catch(e){ /* si el navegador no lo permite, la recarga normal basta */ }
+    /* Nada de lo pendiente se puede quedar en memoria al recargar. */
+    try{ await DB._flushYa(); }catch(e){}
     // El parámetro obliga a pedir el archivo de nuevo en vez de servir el guardado
     const url = location.pathname + '?v=' + Date.now() + location.hash;
     setTimeout(()=>location.replace(url), 400);
